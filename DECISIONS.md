@@ -1,0 +1,125 @@
+# InfraGuardian — Decision Log
+
+Every non-trivial decision made while building this project, logged as we go. This is interview
+prep material as much as it is project documentation — the goal is to be able to explain *why*
+we did something and what else we considered, not just that it works.
+
+Format per entry: **Decision**, **Why**, **Alternatives considered**, **Why not the alternatives**.
+
+---
+
+## 2026-10-02 — Scoping approach: time-boxed milestones over other scoping styles
+
+**Decision:** Scope the project via time-boxed milestones (M1–M5 in `MILESTONES.md`), each
+mapping to a subset of the 13-phase build plan in `CLAUDE.md`, ending in a demoable checkpoint.
+
+**Why:** Gives a predictable cadence to show progress and a natural place to cut scope if the
+timeline slips, without losing track of what the PRD actually requires.
+
+**Alternatives considered:**
+1. Right-size the MVP down from the full PRD scope (cut features before any milestones existed).
+2. Define a leaner walking-skeleton v0 first (one domain, no LangGraph) before building out
+   breadth.
+3. Keep the full MVP scope as a single undifferentiated backlog.
+
+**Why not the alternatives:** (1) was premature — hadn't yet validated which parts of the PRD
+scope were actually hard before deciding what to cut. (2) is good practice but as a *milestone
+sequencing* choice, not a replacement for milestones — M1 in the chosen plan already functions
+as a walking skeleton (metric contracts + rule pre-screen, no LLM yet), so the benefit of (2)
+is captured inside the milestone structure anyway. (3) gives no forcing function to produce
+demoable increments, which matters for portfolio narrative (being able to show progress, not
+just a final diff).
+
+---
+
+## 2026-10-02 — Milestone grouping and sequencing rationale
+
+**Decision:** Group phases into M1 (ingest+detect, no LLM) → M2 (specialists+orchestration) →
+M3 (safety+remediation+storage) → M4 (API/CLI) → M5 (evaluation+observability+tests+README).
+
+**Why:** Each milestone has a coherent risk profile and a single demo criterion:
+- M1 is pure plumbing/rules — cheapest place to catch contract mistakes before agents depend on them.
+- M2 is the highest-risk milestone (LangGraph + concurrency + synthesis quality) — called out
+  explicitly so slack gets allocated here first if the schedule slips.
+- M3 is where every PRD §9 safety invariant is actually enforced — treated as a checklist
+  against those invariants, not just "it runs."
+- M4 is deliberately small since interfaces are thin wrappers once M1–M3 exist.
+- M5 is explicitly protected from being compressed, because PRD §17 frames evaluation results,
+  safety behavior, and cost/latency numbers as *the* portfolio pitch, not supporting detail.
+
+**Alternatives considered:** Running eval/observability/tests (phases 10–12) earlier, in
+parallel with M2, instead of bundled into the final milestone.
+
+**Why not (fully) adopted:** Noted as an explicit option in `MILESTONES.md` ("Sequencing
+notes") rather than baked into the milestone table — starting the eval harness as soon as M2's
+fixtures exist can de-risk the "did we hit the accuracy targets" question early, but bundling
+it into M5 keeps the milestone table simple. Left as a judgment call to exercise if the M2 demo
+reveals correctness issues worth catching earlier.
+
+---
+
+## 2026-10-02 — Decision logging as a standing practice for this project
+
+**Decision:** Maintain this file going forward; log every build decision here in the same
+change where it's made, including what we did, why, what else we considered, and why we didn't
+pick the alternatives. Also recorded as a persistent memory ([[decision-log-requirement]]) so
+it survives across sessions.
+
+**Why:** This is a portfolio project; the user is preparing for interviews about it and needs
+to be able to articulate tradeoffs, not just demo working code.
+
+**Alternatives considered:** Keeping rationale only in chat history / commit messages.
+
+**Why not the alternatives:** Chat history isn't reviewable later as prep material, and commit
+messages tend to describe *what* changed, not the *options rejected* — interview prep needs the
+rejected-alternatives half explicitly, which neither format captures well by default.
+
+---
+
+## 2026-10-03 — M1 implementation: environment, repo layout, and determinism approach
+
+**Decision:** Implemented M1 (metric contracts, collector abstraction, scenario catalog, rule
+pre-screen, tests, demo script) per the approved plan at `.claude/plans/validated-mixing-papert.md`.
+Key choices carried over from that plan into the actual repo:
+
+1. **`uv` for dependency/env management** (`pyproject.toml`, `.venv`), with `requirements.txt`
+   generated via `uv export --no-dev` purely so the PRD's literal file-tree expectation (§15
+   shows `requirements.txt`) is satisfied for anyone skimming the repo. The lockfile (`uv.lock`)
+   is the real source of truth; `requirements.txt` is a generated artifact, regenerate it with
+   that export command rather than hand-editing it.
+   - *Alternatives:* plain `venv` + `pip install -r requirements.txt` (PRD-literal, but no
+     lockfile reproducibility); `poetry` (not installed, second resolver, no benefit here).
+2. **Repo root is the project directory itself**, not a nested `infra-guardian/` folder — the
+   PRD's tree is a module-layout spec, not a literal nesting instruction.
+3. **`StrEnum` for `Domain`** (`tools/metrics.py`) — gives string-equality/serialization for
+   free in Pydantic and in scenario-name matching (`name.startswith(domain.value)` in tests),
+   without a separate str-mapping layer. Plain `Enum` would require explicit `.value` access
+   everywhere it's compared against a string; `StrEnum` (3.11+) removes that friction.
+4. **12 hand-authored scenarios (4/domain: 1 healthy + 3 degraded)**, each a literal list of
+   5-8 samples with an explicit numeric trajectory (e.g. connection pool utilization climbing
+   20%→100% across 8 ticks). No RNG anywhere in `tools/scenarios.py`. Confirmed in practice: the
+   rule-engine tests parametrize over every scenario and assert the *first* sample of every
+   scenario (healthy and degraded) is non-anomalous and the *last* sample of every degraded
+   scenario is anomalous — this encodes "scenarios start healthy and degrade" as an executable
+   invariant, not just a design note.
+5. **Threshold values are judgment calls, not tuned-from-real-data numbers** (e.g.
+   `DB_LATENCY_P95_MS_MAX = 200`, `GPU_ECC_ERRORS_MAX = 0`) — documented inline in
+   `tools/thresholds.py` where the reasoning isn't self-evident (e.g. why any ECC error counts
+   as anomalous: it indicates a hardware fault, not just "high usage"). This is a known
+   simplification worth stating plainly in an interview: thresholds would come from historical
+   baselining in a real deployment; here they're chosen to make the hand-authored scenarios
+   classify correctly and defensibly.
+6. **Demo script requires `-m` invocation** (`uv run python -m scripts.demo <name>`, not
+   `uv run python scripts/demo.py <name>`) — running a script directly doesn't put the repo
+   root on `sys.path`, so the `from tools...` imports fail; running as a module does. Added
+   `scripts/__init__.py` and fixed the usage comment after hitting this directly. Not worth
+   adding a `sys.path` hack for a one-off demo script.
+
+**Why these over other options:** All already weighed in the approved plan; this entry mainly
+records that the plan was followed as written, plus the two things only became visible during
+implementation (`StrEnum` convenience, the `-m` invocation requirement) rather than being
+foreseen in planning.
+
+**Verification:** `uv run pytest -q` → 34 passed. `uv run python -m scripts.demo <scenario>` for
+`db_connection_pool_exhaustion`, `cpu_mem_memory_pressure`, and `gpu_ecc_errors` manually
+confirmed to transition healthy → anomalous with correct breached-rule reporting.
