@@ -215,7 +215,11 @@ def _build_synthesis_output(text: str) -> SynthesisOutput:
         unified_root_cause="; ".join(f["root_cause"] for f in parsed if "root_cause" in f),
         correlations=correlations,
         severity=worst_severity,
-        confidence=0.6 if len(unique_domains) > 1 else 0.75,
+        # Single-domain findings get a high canned confidence so the fake model can exercise
+        # the auto-remediate gate end-to-end in tests/demos without a real API key (PRD FR-12);
+        # multi-domain findings stay below the threshold since M3 routing always sends
+        # cross-domain incidents to RECOMMEND regardless of confidence (see tools/routing.py).
+        confidence=0.6 if len(unique_domains) > 1 else 0.9,
         predictive_risk="; ".join(f.get("predictive_risk", "") for f in parsed if f.get("predictive_risk")),
         priority_ordered_actions=[
             f"Review {d.value} specialist finding and apply its recommended runbook" for d in unique_domains

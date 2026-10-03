@@ -36,6 +36,17 @@ class Severity(StrEnum):
     CRITICAL = "critical"
 
 
+class RoutingDecision(StrEnum):
+    """
+    Outcome of `tools.routing.route()` (PRD FR-12-14). Deterministic, not LLM-produced — see
+    `tools/routing.py` for the gate logic that assigns one of these to every incident.
+    """
+
+    AUTO_REMEDIATE = "auto_remediate"
+    RECOMMEND = "recommend"
+    ESCALATE = "escalate"
+
+
 class SpecialistFinding(BaseModel):
     """
     One domain specialist's structured root-cause analysis for a single anomalous sample.
@@ -83,10 +94,11 @@ class IncidentReport(BaseModel):
     The canonical incident report (PRD §8). This is the single artifact every downstream
     consumer (routing in M3, the API/CLI in M4, the evaluation harness in M5) is built against.
 
-    `routing_decision` and `recommended_or_executed_runbook` are placeholders in M2
-    ("pending_m3") — the auto-remediate/recommend/escalate gating logic that actually populates
-    them is M3's responsibility (PRD FR-12-16), but the field exists now so the schema is
-    stable going forward and M3 doesn't need a breaking change.
+    `routing_decision` is set by `tools.routing.route()` (M3, PRD FR-12-14) — every report must
+    have one explicitly assigned by the orchestrator; there is no longer a placeholder default.
+    `selected_runbook_id` is the allowlist id (PRD FR-15) the routing decision picked, if any;
+    `recommended_or_executed_runbook` is the human-readable counterpart for the §8 contract's
+    field of that name.
     """
 
     incident_id: str
@@ -101,8 +113,9 @@ class IncidentReport(BaseModel):
     confidence: float = Field(ge=0, le=1)
     predictive_risk: str
     priority_ordered_actions: list[str]
+    selected_runbook_id: str | None = None
     recommended_or_executed_runbook: str | None = None
-    routing_decision: str = "pending_m3"
+    routing_decision: RoutingDecision
     automation_safety_reason: str
 
 

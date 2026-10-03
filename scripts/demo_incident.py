@@ -1,6 +1,10 @@
 """
-Manual demo for M2: run a full scenario through the LangGraph orchestrator
-(screen -> specialists -> synthesize) and print the resulting IncidentReport.
+Manual demo for M2/M3: run a full scenario through the LangGraph orchestrator
+(screen -> specialists -> synthesize -> route_and_remediate) and print the resulting
+IncidentReport, including its routing decision and (if auto-remediated) the runbook result.
+
+Persists to `infraguardian.db` by default (PRD §13) — inspect with e.g.:
+    sqlite3 infraguardian.db "select incident_id, severity, routing_decision from incidents;"
 
 Uses the offline fake model by default (no API key needed). Set INFRAGUARDIAN_MODEL (and the
 provider's API key env var) to run against a real model instead — e.g.:
@@ -32,9 +36,14 @@ def main() -> None:
         samples[final_sample.domain] = final_sample
 
     print(f"Analyzing: {', '.join(scenario_names)}\n")
-    report = run_incident(samples)
+    report = run_incident(samples, persist=True)
     print(report.model_dump_json(indent=2))
+    print(
+        f"\nRouting decision: {report.routing_decision.value}"
+        f"\nSelected runbook: {report.selected_runbook_id or '(none)'}"
+    )
 
 
 if __name__ == "__main__":
     main()
+

@@ -190,3 +190,95 @@ two-domain case (two specialists + synthesis, non-empty `correlations`) — all 
 coherent, schema-valid `IncidentReport` JSON. Real-provider verification (Anthropic/Gemini) is
 deferred until the user's API key is sorted — tracked as a follow-up, not blocking M2 completion
 since the model-agnostic design means it's a config change, not a code change, to verify later.
+
+---
+
+## 2026-10-03 — M3 scoping: confidence calibration method and runbook selection
+
+**Decision:** Before implementing M3, resolved two open questions via `AskUserQuestion`:
+
+1. **Confidence calibration: calibrated combination of model-reported confidence and a
+   deterministic rule/safety signal**, over "pure model-reported" and "pure rule-derived."
+   *Rejected: pure model-reported* — a hallucinated/miscalibrated number would flow straight
+   into the FR-12 auto-remediate gate unchecked, exactly the "fail open" failure mode PRD §9
+   exists to prevent. *Rejected: pure rule-derived* — defensible for the gate itself, but
+   discards the model's own signal about root-cause reasoning quality, which the rule engine
+   has no way to assess (rules only see threshold breaches, not causal reasoning).
+2. **Which ≥3 remediation runbooks to implement — user explicitly delegated this to the
+   assistant's judgment** ("what would you reccomend?" rather than picking from given options).
+   Recommended and implemented: one runbook per domain — DB connection-pool recycle, CPU/mem
+   worker-process restart, GPU memory-cache clear. Rationale for the recommendation: each is the
+   narrowest-blast-radius, most reversible action per domain (no data deletion, no capacity
+   reduction, no network/security config changes — consistent with `CLAUDE.md`'s open-questions
+   default), giving a clean "one runbook per domain" portfolio story while clearing the PRD's
+   floor of ≥3 total. *Not implemented*: CPU worker-pool scaling, which has a larger blast
+   radius (provisions new infra) — deferred to a post-MVP roadmap item rather than added as a
+   4th runbook, keeping the MVP allowlist small enough to audit end-to-end in an interview.
+   **This is flagged explicitly because it was the assistant's recommendation, not a
+   user-specified choice** — logged here per the project's standing decision-log practice so
+   it's clear in hindsight whose call this was and why.
+
+---
+
+## 2026-10-03 — M3 implementation: routing gates, remediation runbooks, incident store
+
+**Decision:** Implemented M3 per the approved plan — `tools/confidence.py` (calibration),
+`agents/schemas.py` extensions (`RoutingDecision` enum, `selected_runbook_id` field),
+`tools/remediation.py` (allowlist), `tools/routing.py` (deterministic gates),
+`storage/incident_store.py` (SQLite), and `orchestrator.py` extensions (fail-closed error
+handling, `route_and_remediate` node, `persist` param). Concrete choices:
+
+1. **Calibration formula**: `calibrated_confidence = min(model_confidence, domain_count_cap)`
+   where the cap is 0.65 for a single domain with `UNKNOWN`/`UNSAFE` automation safety, 0.95 for
+   ≥2 corroborating domains all `SAFE`, and 0.8 otherwise (`tools/confidence.py::calibrate`). A
+   stated judgment call, not derived from real incident data — documented inline and in the
+   function's docstring rather than presented as empirically tuned.
+2. **Routing (`tools/routing.py::route`) is a deterministic function, not an LLM call** — checks
+   severity/confidence/safety in a fixed priority order (critical → escalate; confidence < 0.5 →
+   escalate; confidence ≥ 0.8 + single-domain SAFE + runbook exists → auto-remediate; anything
+   else → recommend). Cross-domain incidents always route to at least `RECOMMEND` even at high
+   confidence/safety in this MVP, because a single runbook only ever targets one domain —
+   auto-executing one domain's fix while leaving a corroborated second domain unaddressed is a
+   scope mismatch this MVP doesn't attempt to solve.
+3. **Allowlist is a static dict of dataclasses** (`tools/remediation.py::RUNBOOKS`), not Pydantic
+   models — runbooks never cross an LLM structured-output boundary (the LLM only ever selects an
+   id, never constructs one), so Pydantic's validation benefit doesn't apply here; a plain
+   `@dataclass` holding a callable is simpler. Execution is simulated (logs what it would do,
+   returns a canned success) since there's no real DB/host/GPU to act on in a portfolio project
+   — stated explicitly in each runbook's docstring, not glossed over.
+4. **Fail-closed error handling wraps both specialist and synthesis LLM calls** in
+   `orchestrator.py`, producing sentinel `SpecialistFinding`/`SynthesisOutput` instances on
+   exception. The sentinel's severity is forced to `CRITICAL` (not `HIGH`, as drafted in
+   planning) — found during implementation that `HIGH` severity plus `UNKNOWN` safety could
+   still combine with a high model-reported confidence from a *different* domain's valid
+   finding to land outside the escalate path in some multi-domain combinations; `CRITICAL`
+   unconditionally trips the "critical never auto-remediates" gate (checked first in `route()`)
+   regardless of any other signal, which is the stronger and simpler fail-closed guarantee PRD
+   §9 actually asks for.
+5. **SQLite incident store** (`storage/incident_store.py`) uses two tables — `incidents` (full
+   report as JSON + indexed columns) and `remediation_actions` (FR-16 audit log) — with a
+   `UNIQUE(incident_id, runbook_id)` constraint backing the idempotency check
+   (`was_already_executed`), consulted before `_route_and_remediate` calls a runbook's
+   `execute()`.
+6. **`run_incident()` gained a `persist: bool = True` parameter** so tests can opt out
+   (`persist=False`) and never touch a real `infraguardian.db` file, while the demo script and
+   any future API/CLI caller get persistence by default.
+7. **Fake model's canned single-domain synthesis confidence raised from 0.75 to 0.9** — found
+   during manual verification that the auto-remediate gate (threshold 0.8) could never actually
+   fire end-to-end with the fake model's original canned confidence, which would have made the
+   milestone's primary demo criterion ("same incident flows through routing gates to
+   auto-remediate... correctly") undemonstrable without a real API key. Multi-domain confidence
+   stays at 0.6, since M3 routing sends cross-domain incidents to RECOMMEND regardless of
+   confidence anyway.
+
+**Verification:** `uv run pytest -q` → 68 passed (44 from M1+M2 + 24 new:
+`test_confidence.py`, `test_remediation.py`, `test_routing.py`, `test_incident_store.py`, plus 2
+new `test_orchestrator.py` cases for the auto-remediate path and the fail-closed specialist
+failure path). Manually ran `uv run python -m scripts.demo_incident db_connection_pool_exhaustion`
+— confirmed `routing_decision: "auto_remediate"`, `selected_runbook_id:
+"db.recycle_connection_pool"`, and a corresponding `remediation_actions` row in
+`infraguardian.db`. Manually ran `uv run python -m scripts.demo_incident gpu_ecc_errors` —
+confirmed `severity: "critical"` forces `routing_decision: "escalate"` even though the
+underlying confidence (0.65) would otherwise be within range, demonstrating the "critical never
+auto-remediates" gate holding regardless of other signals. Confirmed via `sqlite3
+infraguardian.db ".schema"` that the two-table structure matches the design.

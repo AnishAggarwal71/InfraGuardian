@@ -46,6 +46,6 @@ Update the status column below as milestones complete. Keep entries one line.
 |---|---|
 | M1 | Done (2026-10-03) — metrics contracts, collectors, 12 scenarios, rule engine, 34 tests passing, demo script |
 | M2 | Done (2026-10-03) — model-agnostic LLM factory, 3 specialist agents, LangGraph orchestrator (fan-out/fan-in), 44 tests passing, demo script |
-| M3 | Not started |
+| M3 | Done (2026-10-03) — confidence calibration, deterministic routing gates, 3 allowlisted runbooks, SQLite incident store + audit log, fail-closed error handling, 68 tests passing |
 | M4 | Not started |
 | M5 | Not started |
