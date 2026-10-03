@@ -4,11 +4,13 @@ version = "0.1.0"
 description = "Agentic infrastructure observability and incident-response system"
 requires-python = ">=3.11"
 dependencies = [
+    "fastapi>=0.142.2",
     "langchain>=1.4.3",
     "langchain-anthropic>=1.7.5",
     "langchain-google-genai>=4.4.0",
     "langgraph>=1.2.12",
     "pydantic>=2.6",
+    "uvicorn[standard]>=0.54.0",
 ]
 
 [dependency-groups]

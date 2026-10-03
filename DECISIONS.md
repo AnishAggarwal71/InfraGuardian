@@ -282,3 +282,68 @@ confirmed `severity: "critical"` forces `routing_decision: "escalate"` even thou
 underlying confidence (0.65) would otherwise be within range, demonstrating the "critical never
 auto-remediates" gate holding regardless of other signals. Confirmed via `sqlite3
 infraguardian.db ".schema"` that the two-table structure matches the design.
+
+
+---
+
+## 2026-10-03 — M4 scoping and implementation: API, CLI, autonomous execution window
+
+**Context:** The user granted broad autonomy for this milestone ("give yourself all the
+necessary permissions... always go with the recommended... I'll go through everything once")
+for a ~1.5 hour window while away. All M4 decisions below were made without pausing for
+confirmation, per that explicit delegation; irreversible/destructive actions were still avoided
+or flagged per standing safety practice (none were needed for M4 — only additive file creation,
+dependency installation, and one local `.db` artifact cleanup already covered by `.gitignore`).
+
+**Decision 1 — FastAPI + uvicorn, added via `uv add fastapi "uvicorn[standard]"`.** PRD §15
+names FastAPI explicitly as the stack choice, so this wasn't a real alternatives decision; the
+only live choice was request schema shape (below).
+
+**Decision 2 — `AnalyzeRequest.samples` uses a plain `Union[DBMetrics, CPUMemMetrics,
+GPUMetrics]`, not a Pydantic discriminated union.** *Why:* Pydantic v2's discriminated-union
+feature requires the discriminator field to be typed `Literal` on every member model, but
+`domain: Domain` (a `StrEnum`) is not `Literal` — using it as a discriminator raised
+`PydanticUserError: Model 'DBMetrics' needs field 'domain' to be of type 'Literal'` at import
+time. *Alternative rejected:* retyping `domain` as `Literal["db"]` etc. on the metrics models
+themselves — rejected because those models are shared with the rule engine and specialist
+agents from M1/M2, and loosening/retyping a field used across the whole pipeline just to satisfy
+one API-layer convenience isn't worth the blast radius. Plain `Union` with Pydantic v2's default
+"smart mode" matching works correctly here because each domain's metrics model has a distinct,
+non-overlapping set of required fields — verified empirically by parsing a raw DB-shaped dict
+and confirming it resolves to `DBMetrics`, not misclassified as another domain.
+
+**Decision 3 — `/analyze` accepts both `scenarios` (names) and `samples` (raw metric dicts) in
+one request body**, matching the PRD's FR-17 ("run predefined scenarios") and FR-18 ("metric
+inputs") as two input modes of the same endpoint rather than two endpoints. *Alternative
+considered:* separate `/analyze/scenario` and `/analyze/samples` endpoints — rejected as
+unnecessary surface area; a single endpoint with optional fields and a 400 on "neither provided"
+covers both FRs with one code path and one response contract.
+
+**Decision 4 — Built a dedicated `cli/main.py` (argparse, `list`/`analyze` subcommands) rather
+than promoting `scripts/demo_incident.py` into the CLI.** *Why:* `demo_incident.py` was written
+as an internal verification tool during M2/M3 and always prints full JSON; FR-17 asks for a
+user-facing CLI that can list scenarios and choose output format, which argparse subcommands
+give cleanly. *Alternative considered:* extending `demo_incident.py` with flags instead of
+writing a new file — rejected because `demo_incident.py`'s docstring and existing behavior are
+tied to M2/M3's manual-verification narrative ("Manual demo for M2/M3"), and conflating
+"internal demo script" with "the FR-17 user-facing CLI" would blur that distinction for anyone
+reading the repo later. Both files are kept, with `cli/main.py`'s docstring explicitly noting
+the distinction.
+
+**Decision 5 — API tests monkeypatch `api.server.run_incident` to force `persist=False`**,
+rather than letting `/analyze` write to the real `infraguardian.db` during tests. *Why:*
+consistent with the `persist: bool` parameter added in M3 specifically so tests never depend on
+or pollute a real database file.
+
+**Verification:** `uv run pytest -q` → 73 passed (68 from M1-M3 + 5 new in `test_api.py`:
+`/health`, `/analyze` with scenario names, `/analyze` with raw samples, 400 for unknown
+scenario, 400 for empty request). Manually ran `uv run python -m cli.main list` (prints all 12
+scenario names) and `uv run python -m cli.main analyze <name> --no-persist` for both an
+auto-remediate case (`db_connection_pool_exhaustion`) and the critical-escalate case
+(`gpu_ecc_errors`) — both matched the M3 demo's known-correct routing. Also started a real
+`uvicorn api.server:app` process and `curl`'d it directly (not just an in-process test client):
+`/health` returned `{"status":"ok"}`, `POST /analyze` with a scenario name returned a full
+schema-valid `IncidentReport` JSON body, an empty body returned `400`, and an unknown scenario
+name returned `400` with the full list of valid names in the error detail.
+`requirements.txt` regenerated via `uv export --no-hashes --no-dev -o requirements.txt` to
+capture the new fastapi/uvicorn/starlette transitive dependencies.
