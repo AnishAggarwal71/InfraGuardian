@@ -1,0 +1,531 @@
+{
+  "generated_at": "2026-10-03T16:17:26.462113Z",
+  "detection_accuracy": 1.0,
+  "rca_accuracy": 1.0,
+  "routing_accuracy": 1.0,
+  "false_auto_remediation_count": 0,
+  "schema_validity_rate": 1.0,
+  "rule_filtering_rate": 0.0,
+  "llm_call_count": 40,
+  "latency_p50_ms": 0.7813960110070184,
+  "latency_p95_ms": 2.3026841328828596,
+  "detection_results": [
+    {
+      "name": "db_healthy[0]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "db_healthy[1]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "db_healthy[2]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "db_healthy[3]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "db_healthy[4]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "db_healthy[5]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "db_slow_query_degradation[0]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "db_slow_query_degradation[1]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "db_slow_query_degradation[2]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "db_slow_query_degradation[3]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "db_slow_query_degradation[4]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "db_slow_query_degradation[5]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "db_slow_query_degradation[6]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "db_slow_query_degradation[7]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "db_connection_pool_exhaustion[0]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "db_connection_pool_exhaustion[1]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "db_connection_pool_exhaustion[2]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "db_connection_pool_exhaustion[3]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "db_connection_pool_exhaustion[4]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "db_connection_pool_exhaustion[5]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "db_connection_pool_exhaustion[6]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "db_connection_pool_exhaustion[7]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "db_replication_lag[0]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "db_replication_lag[1]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "db_replication_lag[2]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "db_replication_lag[3]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "db_replication_lag[4]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "db_replication_lag[5]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "db_replication_lag[6]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "cpu_mem_healthy[0]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "cpu_mem_healthy[1]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "cpu_mem_healthy[2]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "cpu_mem_healthy[3]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "cpu_mem_healthy[4]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "cpu_mem_healthy[5]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "cpu_mem_cpu_saturation[0]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "cpu_mem_cpu_saturation[1]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "cpu_mem_cpu_saturation[2]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "cpu_mem_cpu_saturation[3]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "cpu_mem_cpu_saturation[4]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "cpu_mem_cpu_saturation[5]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "cpu_mem_cpu_saturation[6]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "cpu_mem_cpu_saturation[7]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "cpu_mem_memory_pressure[0]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "cpu_mem_memory_pressure[1]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "cpu_mem_memory_pressure[2]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "cpu_mem_memory_pressure[3]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "cpu_mem_memory_pressure[4]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "cpu_mem_memory_pressure[5]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "cpu_mem_memory_pressure[6]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "cpu_mem_memory_pressure[7]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "cpu_mem_load_spike[0]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "cpu_mem_load_spike[1]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "cpu_mem_load_spike[2]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "cpu_mem_load_spike[3]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "cpu_mem_load_spike[4]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "cpu_mem_load_spike[5]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "cpu_mem_load_spike[6]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "gpu_healthy[0]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "gpu_healthy[1]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "gpu_healthy[2]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "gpu_healthy[3]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "gpu_healthy[4]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "gpu_healthy[5]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "gpu_thermal_pressure[0]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "gpu_thermal_pressure[1]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "gpu_thermal_pressure[2]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "gpu_thermal_pressure[3]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "gpu_thermal_pressure[4]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "gpu_thermal_pressure[5]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "gpu_thermal_pressure[6]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "gpu_thermal_pressure[7]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "gpu_memory_saturation[0]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "gpu_memory_saturation[1]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "gpu_memory_saturation[2]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "gpu_memory_saturation[3]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "gpu_memory_saturation[4]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "gpu_memory_saturation[5]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "gpu_memory_saturation[6]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "gpu_memory_saturation[7]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "gpu_ecc_errors[0]",
+      "passed": true,
+      "detail": "expected=False actual=False"
+    },
+    {
+      "name": "gpu_ecc_errors[1]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "gpu_ecc_errors[2]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "gpu_ecc_errors[3]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "gpu_ecc_errors[4]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "gpu_ecc_errors[5]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    },
+    {
+      "name": "gpu_ecc_errors[6]",
+      "passed": true,
+      "detail": "expected=True actual=True"
+    }
+  ],
+  "incident_results": [
+    {
+      "name": "db_slow_query_degradation",
+      "passed": true,
+      "detail": "severity=medium routing=recommend runbook=None rca_ok=True routing_ok=True"
+    },
+    {
+      "name": "db_connection_pool_exhaustion",
+      "passed": true,
+      "detail": "severity=high routing=auto_remediate runbook=db.recycle_connection_pool rca_ok=True routing_ok=True"
+    },
+    {
+      "name": "db_replication_lag",
+      "passed": true,
+      "detail": "severity=high routing=recommend runbook=None rca_ok=True routing_ok=True"
+    },
+    {
+      "name": "cpu_mem_cpu_saturation",
+      "passed": true,
+      "detail": "severity=medium routing=auto_remediate runbook=cpu_mem.restart_worker_process rca_ok=True routing_ok=True"
+    },
+    {
+      "name": "cpu_mem_memory_pressure",
+      "passed": true,
+      "detail": "severity=high routing=recommend runbook=None rca_ok=True routing_ok=True"
+    },
+    {
+      "name": "cpu_mem_load_spike",
+      "passed": true,
+      "detail": "severity=high routing=recommend runbook=None rca_ok=True routing_ok=True"
+    },
+    {
+      "name": "gpu_thermal_pressure",
+      "passed": true,
+      "detail": "severity=high routing=recommend runbook=None rca_ok=True routing_ok=True"
+    },
+    {
+      "name": "gpu_memory_saturation",
+      "passed": true,
+      "detail": "severity=medium routing=auto_remediate runbook=gpu.clear_memory_cache rca_ok=True routing_ok=True"
+    },
+    {
+      "name": "gpu_ecc_errors",
+      "passed": true,
+      "detail": "severity=critical routing=escalate runbook=None rca_ok=True routing_ok=True"
+    },
+    {
+      "name": "all_safe_triple_domain",
+      "passed": true,
+      "detail": "severity=high routing=recommend runbook=None rca_ok=True routing_ok=True"
+    },
+    {
+      "name": "critical_plus_unsafe_dual_domain",
+      "passed": true,
+      "detail": "severity=critical routing=escalate runbook=None rca_ok=True routing_ok=True"
+    },
+    {
+      "name": "mixed_safety_dual_domain_cpu_db",
+      "passed": true,
+      "detail": "severity=high routing=recommend runbook=None rca_ok=True routing_ok=True"
+    },
+    {
+      "name": "mixed_safety_dual_domain_db_gpu",
+      "passed": true,
+      "detail": "severity=high routing=recommend runbook=None rca_ok=True routing_ok=True"
+    },
+    {
+      "name": "all_safe_dual_domain_cpu_gpu",
+      "passed": true,
+      "detail": "severity=medium routing=recommend runbook=None rca_ok=True routing_ok=True"
+    },
+    {
+      "name": "critical_plus_safe_dual_domain",
+      "passed": true,
+      "detail": "severity=critical routing=escalate runbook=None rca_ok=True routing_ok=True"
+    },
+    {
+      "name": "unsafe_plus_safe_dual_domain",
+      "passed": true,
+      "detail": "severity=high routing=recommend runbook=None rca_ok=True routing_ok=True"
+    }
+  ]
+}

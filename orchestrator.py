@@ -18,6 +18,7 @@ runbook and records the FR-16 audit row.
 
 from __future__ import annotations
 
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Annotated, Any, TypedDict
@@ -37,6 +38,7 @@ from storage import incident_store
 from tools.confidence import calibrate
 from tools.llm import get_chat_model
 from tools.metrics import Domain, MetricSample
+from tools.observability import RECORDER
 from tools.remediation import RUNBOOKS
 from tools.routing import route
 from tools.thresholds import DetectionResult, evaluate
@@ -116,9 +118,12 @@ def _make_specialist_node(domain: Domain):
     def _node(state: IncidentState) -> IncidentState:
         sample = state["samples"][domain]
         detection = state["detections"][domain]
+        start = time.perf_counter()
         try:
             finding = _SPECIALISTS[domain](sample, detection)
+            RECORDER.record_agent_call(domain.value, (time.perf_counter() - start) * 1000, success=True)
         except Exception as exc:  # noqa: BLE001 - deliberately broad: any failure fails closed
+            RECORDER.record_agent_call(domain.value, (time.perf_counter() - start) * 1000, success=False)
             finding = _sentinel_finding(domain, exc)
         return {"findings": {domain: finding}}
 
@@ -215,10 +220,13 @@ def _synthesize(state: IncidentState) -> IncidentState:
         )
         return {"report": report}
 
+    _start = time.perf_counter()
     try:
         synthesis_model = get_chat_model().with_structured_output(SynthesisOutput)
         synthesis: SynthesisOutput = synthesis_model.invoke(_build_synthesis_prompt(findings))
+        RECORDER.record_agent_call("synthesis", (time.perf_counter() - _start) * 1000, success=True)
     except Exception as exc:  # noqa: BLE001 - deliberately broad: any failure fails closed
+        RECORDER.record_agent_call("synthesis", (time.perf_counter() - _start) * 1000, success=False)
         synthesis = _sentinel_synthesis_output(exc)
 
     calibrated_confidence = calibrate(synthesis.confidence, findings, synthesis.correlations)
@@ -315,9 +323,17 @@ def run_incident(samples: dict[Domain, MetricSample], persist: bool = True) -> I
     `persist` controls whether the final report is written to the SQLite incident store
     (PRD §13) — it's a side effect of this entrypoint, not a graph node, so tests can pass
     `persist=False` to avoid touching a real DB file.
+
+    Always records end-to-end latency, routing decision, and confidence to
+    `tools.observability.RECORDER` (PRD §11) regardless of `persist`, since self-observability
+    is not the same concern as incident durability.
     """
+    start = time.perf_counter()
     final_state = _GRAPH.invoke({"samples": samples})
     report = final_state["report"]
+    RECORDER.record_incident(
+        (time.perf_counter() - start) * 1000, report.routing_decision, report.confidence
+    )
     if persist:
         incident_store.save_incident(report)
     return report

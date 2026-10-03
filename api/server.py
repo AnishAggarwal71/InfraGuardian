@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from agents.schemas import IncidentReport
 from orchestrator import run_incident
 from tools.metrics import CPUMemMetrics, DBMetrics, GPUMetrics, Domain
+from tools.observability import RECORDER, ObservabilitySnapshot
 from tools.scenarios import SCENARIOS
 
 app = FastAPI(
@@ -92,3 +93,10 @@ def analyze(request: AnalyzeRequest) -> IncidentReport:
 def health() -> dict[str, str]:
     """Liveness check — no dependency on the LLM or the incident store."""
     return {"status": "ok"}
+
+
+@app.get("/metrics", response_model=ObservabilitySnapshot)
+def metrics() -> ObservabilitySnapshot:
+    """Self-observability snapshot for this process (PRD §11) — invocation counts, per-agent
+    latency/failure rate, end-to-end latency, routing/confidence distributions."""
+    return RECORDER.snapshot()

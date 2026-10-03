@@ -17,6 +17,7 @@ import argparse
 import sys
 
 from orchestrator import run_incident
+from tools.observability import RECORDER
 from tools.scenarios import SCENARIOS
 
 
@@ -51,6 +52,11 @@ def _cmd_analyze(args: argparse.Namespace) -> None:
     print(f"  Root cause:        {report.unified_root_cause}")
 
 
+def _cmd_metrics(_args: argparse.Namespace) -> None:
+    """Print the current process's self-observability snapshot (PRD §11) as JSON."""
+    print(RECORDER.snapshot().model_dump_json(indent=2))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="infraguardian", description="InfraGuardian CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -69,6 +75,11 @@ def main() -> None:
         "--no-persist", action="store_true", help="Don't write the result to the SQLite incident store."
     )
     analyze_parser.set_defaults(func=_cmd_analyze)
+
+    metrics_parser = subparsers.add_parser(
+        "metrics", help="Print this process's self-observability snapshot (PRD §11)."
+    )
+    metrics_parser.set_defaults(func=_cmd_metrics)
 
     args = parser.parse_args()
     args.func(args)

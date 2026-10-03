@@ -48,4 +48,4 @@ Update the status column below as milestones complete. Keep entries one line.
 | M2 | Done (2026-10-03) — model-agnostic LLM factory, 3 specialist agents, LangGraph orchestrator (fan-out/fan-in), 44 tests passing, demo script |
 | M3 | Done (2026-10-03) — confidence calibration, deterministic routing gates, 3 allowlisted runbooks, SQLite incident store + audit log, fail-closed error handling, 68 tests passing |
 | M4 | Done (2026-10-03) — FastAPI `POST /analyze` + `/health`, CLI (`list`/`analyze`), 73 tests passing |
-| M5 | Not started |
+| M5 | Done (2026-10-03) — 104-case evaluation harness (100% across all PRD §10 targets), self-observability (`/metrics`), 79 tests passing, README |
