@@ -123,3 +123,70 @@ foreseen in planning.
 **Verification:** `uv run pytest -q` → 34 passed. `uv run python -m scripts.demo <scenario>` for
 `db_connection_pool_exhaustion`, `cpu_mem_memory_pressure`, and `gpu_ecc_errors` manually
 confirmed to transition healthy → anomalous with correct breached-rule reporting.
+
+---
+
+## 2026-10-03 — M2 scoping: model-agnostic LLM layer (user-driven requirement)
+
+**Decision:** Before implementing M2, the user explicitly required the LLM layer stay
+model-agnostic — they're still finalizing an Anthropic key and may switch to Gemini or an
+open-source model later purely for cost reasons. Resolved via `AskUserQuestion` into two
+sub-decisions:
+
+1. **Provider routing via LangChain's `init_chat_model("provider:model")`** rather than LiteLLM
+   or a hand-rolled adapter `Protocol`. All three options are genuinely provider-agnostic; the
+   deciding factor was that LangGraph (already required by the PRD for orchestration) depends
+   on LangChain anyway, so `init_chat_model` adds zero new abstraction layers, while LiteLLM
+   would add a second, overlapping one just for model calls. A hand-rolled adapter gives more
+   control but reinvents `with_structured_output`, which we need regardless for schema-valid
+   RCA output (FR-07).
+2. **An offline, zero-cost `FakeInfraGuardianModel` as the default** when no
+   `INFRAGUARDIAN_MODEL` env var is set, instead of requiring a real key before anything runs.
+   This was explicitly a portfolio/pragmatic tradeoff: it means the whole M2 pipeline (and its
+   test suite) is runnable and demoable today, with zero API cost, and the test suite never
+   needs network access or a real key to pass in CI. The fake model is a deliberately simple
+   lookup table keyed on breached-rule names found in the prompt text — documented in
+   `tools/llm.py` as explicitly *not* attempting to simulate real reasoning, so it's never
+   mistaken for a claim about model quality.
+
+**Interview framing:** the mechanism that actually delivers model-agnosticism is narrow and
+inspectable — `tools/llm.py` is the only file allowed to import a provider-specific LangChain
+package (`langchain_anthropic`, `langchain_google_genai`, etc.), and it does so lazily inside
+`get_chat_model()`, gated on an environment variable. Every agent and the orchestrator only ever
+call `get_chat_model()` — switching providers is an env var change, not a code change. This is a
+good "show me, don't tell me" answer to "how is this actually model-agnostic."
+
+---
+
+## 2026-10-03 — M2 implementation: LangGraph fan-out/fan-in, structured output, and synthesis
+
+**Decision:** Implemented M2 per the approved plan — `agents/schemas.py` (shared Pydantic
+contracts), `tools/llm.py` (model factory + fake model), `agents/{db,cpu_mem,gpu}_agent.py`
+(one `diagnose()` per domain), `orchestrator.py` (LangGraph `StateGraph`). Two implementation
+details surfaced only once real code ran (not foreseen in planning), both worth stating plainly
+since they're genuine "what went wrong and how did you find it" interview material:
+
+1. **LangGraph requires an explicit reducer for any state key more than one parallel node
+   writes to.** The first version of `orchestrator.py` had each specialist node read-modify-write
+   the shared `findings` dict directly; running two specialists concurrently (the multi-domain
+   test case) raised `InvalidUpdateError: Can receive only one value per step`. Fixed by giving
+   `findings` an `Annotated[dict, _merge_findings]` reducer in the `TypedDict` and having each
+   specialist node return only its own single-key dict (`{"findings": {domain: finding}}`) —
+   LangGraph then merges per-branch writes itself instead of the nodes racing to merge by hand.
+   This is the concrete mechanic behind FR-08 (parallel specialist execution): parallelism isn't
+   free, it requires state-merge semantics to be explicit.
+2. **`StrEnum` membership checks against the enum type itself don't work as expected in this
+   Python version** — `f.get("severity") in Severity` raised `TypeError: unsupported operand
+   type(s) for 'in': 'str' and 'EnumType'` inside the fake model's synthesis parser. Fixed by
+   checking against `{s.value for s in Severity}` instead. Minor, but a reminder that `StrEnum`
+   gives string *equality*, not automatic membership testing against the enum class with a plain
+   `in`.
+
+**Verification:** `uv run pytest -q` → 44 passed (34 from M1 + 10 new: `test_llm.py`,
+`test_agents.py`, `test_orchestrator.py`), all against the fake model, no network/API key
+required. Manually ran `uv run python -m scripts.demo_incident` for the all-healthy case (empty
+report, zero LLM calls), a single-domain case (one specialist + one synthesis call), and a
+two-domain case (two specialists + synthesis, non-empty `correlations`) — all three produced
+coherent, schema-valid `IncidentReport` JSON. Real-provider verification (Anthropic/Gemini) is
+deferred until the user's API key is sorted — tracked as a follow-up, not blocking M2 completion
+since the model-agnostic design means it's a config change, not a code change, to verify later.
