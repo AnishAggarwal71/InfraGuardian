@@ -1,0 +1,946 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>InfraGuardian — Learn It Like You Built It</title>
+<style>
+  :root {
+    --bg: #0f1420; --panel: #161d2e; --panel2: #1d2740; --text: #dbe4f0; --muted: #8fa0bf;
+    --accent: #5fb3ff; --accent2: #ffb45f; --good: #5fd98a; --bad: #ff6b6b; --warn: #ffd966;
+    --border: #2a3550; --code: #0c1120;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--text); line-height:1.6; }
+  .layout { display:flex; min-height:100vh; }
+  nav.sidebar { width: 260px; flex-shrink:0; background: var(--panel); border-right:1px solid var(--border);
+         position: sticky; top:0; height:100vh; overflow-y:auto; padding: 20px 0; }
+  nav.sidebar h2 { font-size:14px; color: var(--muted); text-transform:uppercase; letter-spacing:.08em;
+         padding: 0 20px; margin: 18px 0 8px; }
+  nav.sidebar h2:first-child { margin-top:0; }
+  nav.sidebar a { display:block; padding: 7px 20px; color: var(--text); text-decoration:none; font-size:14px;
+         border-left: 3px solid transparent; cursor:pointer; }
+  nav.sidebar a:hover { background: var(--panel2); }
+  nav.sidebar a.active { border-left-color: var(--accent); color: var(--accent); background: var(--panel2); }
+  main { flex: 1; padding: 40px 48px 100px; max-width: 920px; }
+  .section { display:none; }
+  .section.active { display:block; animation: fadein .25s ease; }
+  @keyframes fadein { from {opacity:0; transform: translateY(6px);} to {opacity:1; transform:none;} }
+  h1 { font-size: 30px; margin-top:0; color:#fff; }
+  h1 .sub { display:block; font-size:15px; color: var(--muted); font-weight:400; margin-top:6px; }
+  h2 { font-size: 22px; color: var(--accent); margin-top: 36px; border-bottom:1px solid var(--border); padding-bottom:8px;}
+  h3 { font-size:17px; color: #fff; margin-top:26px; }
+  p { color: var(--text); }
+  .lede { font-size:17px; color: #f0f4fa; }
+  .muted { color: var(--muted); }
+  code, pre, .mono { font-family: "SF Mono", Monaco, Consolas, monospace; }
+  code { background: var(--code); padding:2px 6px; border-radius:4px; font-size:.9em; color:#9fd4ff; }
+  pre { background: var(--code); padding:14px 16px; border-radius:8px; overflow-x:auto; border:1px solid var(--border); font-size:13px; }
+  pre code { background:none; padding:0; color:#c9e8ff; }
+  .callout { border-left:4px solid var(--accent); background: var(--panel2); padding:14px 18px; border-radius:0 8px 8px 0; margin:18px 0;}
+  .callout.why { border-left-color: var(--accent2); }
+  .callout.safety { border-left-color: var(--bad); }
+  .callout.gap { border-left-color: var(--warn); }
+  .callout b.tag { text-transform:uppercase; font-size:11px; letter-spacing:.08em; color: var(--muted); display:block; margin-bottom:6px;}
+  .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin:18px 0; }
+  @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+  .card { background: var(--panel2); border:1px solid var(--border); border-radius:10px; padding:16px 18px; }
+  .card h4 { margin:0 0 8px; color:#fff; font-size:15px; }
+  details.acc { background: var(--panel2); border:1px solid var(--border); border-radius:10px; margin:10px 0; overflow:hidden; }
+  details.acc summary { cursor:pointer; padding:13px 18px; font-weight:600; color:#fff; list-style:none; display:flex; align-items:center; gap:10px;}
+  details.acc summary::-webkit-details-marker{ display:none; }
+  details.acc summary::before { content:"▸"; color:var(--accent); transition: transform .15s; }
+  details.acc[open] summary::before { transform: rotate(90deg); }
+  details.acc .body { padding: 2px 20px 16px; }
+  .pill { display:inline-block; font-size:11px; padding:3px 9px; border-radius:999px; background:#223; color:var(--accent); margin-left:8px; font-weight:600; letter-spacing:.03em; }
+  .pill.safe { background:#153a26; color:var(--good); }
+  .pill.unsafe { background:#3a1515; color:var(--bad); }
+  .pill.gap { background:#3a2d10; color:var(--warn); }
+  table { width:100%; border-collapse: collapse; margin:16px 0; font-size:14px; }
+  th, td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--border); }
+  th { color: var(--muted); font-weight:600; text-transform:uppercase; font-size:11px; letter-spacing:.05em; }
+  .flow { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:20px 0; font-family: monospace; font-size:13px; }
+  .flow .node { background: var(--panel2); border:1px solid var(--accent); color:#fff; padding:8px 12px; border-radius:8px; }
+  .flow .arrow { color: var(--muted); }
+  .quiz { background: var(--panel2); border:1px dashed var(--accent); border-radius:10px; padding:16px 18px; margin:18px 0; }
+  .quiz button { background: var(--panel); color: var(--text); border:1px solid var(--border); border-radius:6px; padding:7px 12px; cursor:pointer; margin:4px 6px 4px 0; font-size:13px; }
+  .quiz button:hover { border-color: var(--accent); }
+  .quiz .answer { display:none; margin-top:10px; padding:10px 12px; background: var(--code); border-radius:6px; font-size:14px; }
+  .quiz .answer.shown { display:block; }
+  .progress { position:fixed; top:0; left:260px; right:0; height:3px; background: var(--border); z-index:10; }
+  .progress .bar { height:100%; background: var(--accent); width:11%; transition: width .2s; }
+  .navbtns { display:flex; justify-content:space-between; margin-top:40px; padding-top:20px; border-top:1px solid var(--border); }
+  .navbtns button { background: var(--panel2); color:var(--text); border:1px solid var(--border); padding:10px 18px; border-radius:8px; cursor:pointer; font-size:14px; }
+  .navbtns button:hover { border-color: var(--accent); color: var(--accent); }
+  .fileheader { font-family: monospace; background: var(--code); color:var(--accent2); padding:8px 12px; border-radius:6px 6px 0 0; font-size:13px; display:inline-block; }
+  ul { padding-left: 22px; }
+  li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<div class="progress"><div class="bar" id="progressBar"></div></div>
+<div class="layout">
+  <nav class="sidebar" id="sidebar">
+    <h2>Start Here</h2>
+    <a data-target="s1">1. What is this, really?</a>
+    <a data-target="s2">2. Jargon decoder</a>
+    <h2>How it works</h2>
+    <a data-target="s3">3. Architecture walkthrough</a>
+    <a data-target="s4">4. The build story</a>
+    <a data-target="s5">5. File-by-file tour</a>
+    <h2>Why it's safe</h2>
+    <a data-target="s6">6. Safety deep-dive</a>
+    <a data-target="s7">7. How we proved it works</a>
+    <h2>Interview-proofing</h2>
+    <a data-target="s8">8. Scope vs. gaps (untangled)</a>
+    <a data-target="s9">9. Interview Q&amp;A rehearsal</a>
+  </nav>
+  <main id="main">
+
+<section class="section" id="s1">
+<h1>What is InfraGuardian, really?<span class="sub">The 60-second pitch, then the honest version.</span></h1>
+
+<p class="lede">Imagine three junior engineers who each watch one dashboard — database health, host
+CPU/memory, and GPU health — but never sleep, never miss a threshold breach, and never get called
+in unless something is actually wrong. When one of them sees a problem, they write up a diagnosis.
+If two or three of them see problems at the same time, a fourth, more senior person reads all
+their write-ups and decides: is this one incident or three? What's really going on? And then —
+critically — that senior person follows a strict rulebook about what they're allowed to do about
+it on their own, versus what has to go to a human. That's InfraGuardian.</p>
+
+<div class="callout">
+<b class="tag">In one sentence</b>
+InfraGuardian is an agentic incident-response pipeline: deterministic rules decide <i>whether</i>
+to escalate to an LLM at all, specialist LLM "agents" diagnose anomalies per domain, a LangGraph
+orchestrator correlates their findings into one report, and a deterministic safety gate decides
+whether to auto-fix it, recommend a fix, or page a human — never letting the LLM itself decide
+whether it's allowed to act.
+</div>
+
+<h3>Why would someone care about this?</h3>
+<p>Three reasons, and they're the actual portfolio pitch (not just "I used LangGraph"):</p>
+<div class="grid2">
+<div class="card"><h4>1. Bounded autonomy</h4>The system is deliberately <i>not</i> "give an LLM
+shell access and hope." Every action the system can take is a predefined, allowlisted, reversible
+runbook. The LLM picks from a menu; it never writes new commands. That's the actual hard problem
+in production AI systems — not "can the model answer," but "can I trust it with a blast radius."</div>
+<div class="card"><h4>2. Evaluation rigor</h4>It's not a demo you eyeball once. There's a 104-case
+evaluation harness with hand-derived expected answers (not generated by the code being tested),
+reporting detection accuracy, root-cause accuracy, routing accuracy, and — the one that matters
+most — a hard count of <i>false auto-remediations</i> (currently zero).</div>
+<div class="card"><h4>3. Failure handling as a first-class citizen</h4>What happens when the LLM
+call throws, times out, or returns garbage? Most demos don't even ask. This one answers it
+explicitly: everything fails <i>closed</i> — toward a human, never toward an unsupervised action.</div>
+</div>
+
+<h3>Who is this for? (the honest framing)</h3>
+<p>This is a <b>portfolio / FDE-style</b> project — built to demonstrate production-oriented AI
+systems engineering judgment, not a product shipped to real infrastructure. That distinction
+matters a lot for how you talk about it in an interview, and it's confusing enough that it gets
+its own section later (<a onclick="showSection('s8')">jump to Section 8</a>) — the short version:
+some things are <i>deliberately excluded</i> because the PRD says "not in scope" (real shell
+execution, real PagerDuty integration), and other things are <i>missing because this isn't a
+24/7 deployed service</i> (no auth on the API, no CI pipeline). Both are "not done," but they say
+very different things about the design, and interviewers will probe which is which.</p>
+
+<div class="navbtns"><span></span><button onclick="nextSection('s1')">Next: Jargon decoder →</button></div>
+</section>
+
+<section class="section" id="s2">
+<h1>Jargon decoder<span class="sub">Every term you'll need before the architecture makes sense.</span></h1>
+
+<p>You said you didn't have the vocabulary yet — this is that vocabulary, in the order you'll
+actually encounter it, not alphabetical.</p>
+
+<details class="acc" open><summary>Agent / specialist agent</summary><div class="body">
+<p>Not an autonomous robot. In this codebase it means one specific thing: <b>a function that
+sends a structured prompt to an LLM and gets back a validated Pydantic object</b> — nothing more.
+<code>agents/db_agent.py::diagnose()</code> is "the DB agent." It has no memory, no tools, no
+ability to call anything else. It's invoked once, per anomaly, and returns a typed finding.</p>
+</div></details>
+
+<details class="acc"><summary>LLM / specialist LLM calls</summary><div class="body">
+<p>The actual language model (Claude, in the real-provider case) that reads the prompt and
+produces the finding. In this project it's swappable — see "model-agnostic" below.</p>
+</div></details>
+
+<details class="acc"><summary>Deterministic rule pre-screen</summary><div class="body">
+<p>Plain <code>if value &gt; threshold</code> checks — no LLM involved — that run <i>first</i>,
+against every incoming metric sample. If nothing breaches a threshold, the LLM is never
+called for that domain at all. This is the single most important cost/safety mechanic in the
+whole system: healthy infrastructure costs zero LLM tokens and has zero chance of a model
+hallucinating a problem that doesn't exist.</p>
+</div></details>
+
+<details class="acc"><summary>LangGraph / orchestrator / StateGraph</summary><div class="body">
+<p>LangGraph is a library for wiring steps ("nodes") into a graph with explicit data flow between
+them — think of it as a typed state machine for multi-step LLM workflows. "The orchestrator"
+(<code>orchestrator.py</code>) is <i>our</i> graph: screen → specialists (in parallel) → synthesize
+→ route_and_remediate. "StateGraph" is the specific LangGraph class that holds the shared state
+object threaded through every node.</p>
+</div></details>
+
+<details class="acc"><summary>Synthesis</summary><div class="body">
+<p>The step where one more LLM call reads <i>all</i> the specialist findings together and asks:
+is there a relationship between these? E.g., "DB connection pool exhaustion" and "high CPU" showing
+up at the same time might be one incident (a connection leak eating CPU) or two unrelated ones.
+Synthesis produces the single unified incident report.</p>
+</div></details>
+
+<details class="acc"><summary>Correlation vs. causation (and "hypothesis" labeling)</summary><div class="body">
+<p>Two things happening at the same time (correlation) is not proof that one caused the other
+(causation). The project's output contract <b>requires</b> every causal-sounding claim to be
+labeled a hypothesis unless there's directly measured evidence (like a traced query) — not just
+"these happened around the same time." This is enforced by a field:
+<code>CrossDomainCorrelation.is_causal_hypothesis</code> defaults to <code>True</code> and only a
+model with real evidence should ever set it <code>False</code>.</p>
+</div></details>
+
+<details class="acc"><summary>Confidence calibration</summary><div class="body">
+<p>The LLM reports its own confidence (0–1) in its synthesis. We don't trust that number
+blindly — a model can be confidently wrong. <code>tools/confidence.py</code> caps the model's
+self-reported number against a deterministic ceiling computed from how many domains corroborate
+each other and whether the specialists judged their findings "safe." The gate downstream only
+ever sees this <i>calibrated</i> number, never the raw one.</p>
+</div></details>
+
+<details class="acc"><summary>Routing / routing decision</summary><div class="body">
+<p>The final verdict on what happens to an incident: <code>AUTO_REMEDIATE</code>,
+<code>RECOMMEND</code>, or <code>ESCALATE</code>. Decided by a plain Python function
+(<code>tools/routing.py::route()</code>) — <b>not an LLM call</b>. This is deliberate: the
+most safety-critical decision in the system is the one place an LLM has zero say.</p>
+</div></details>
+
+<details class="acc"><summary>Allowlist / runbook</summary><div class="body">
+<p>A "runbook" is one specific, pre-written, reversible fix (e.g. "recycle the DB connection
+pool"). The "allowlist" is the fixed set of runbooks that exist in code
+(<code>tools/remediation.py::RUNBOOKS</code>). The LLM can only ever <i>select</i> a runbook's
+ID string from this dict — it has no way to invent a new action or supply arbitrary text that
+gets executed. This is the entire mechanism behind "no arbitrary code execution from model
+output."</p>
+</div></details>
+
+<details class="acc"><summary>Idempotent / idempotency guard</summary><div class="body">
+<p>"Running it twice has the same effect as running it once." If a retry or a duplicate request
+tries to execute the same fix for the same incident again, the system checks a database
+constraint first and refuses to double-execute. Enforced by a
+<code>UNIQUE(incident_id, runbook_id)</code> SQL constraint.</p>
+</div></details>
+
+<details class="acc"><summary>Fail closed / fail open</summary><div class="body">
+<p>"Fail closed" means: when something goes wrong (a bad LLM response, a crashed tool call), the
+<i>safe</i>, restrictive outcome happens — escalate to a human. "Fail open" is the opposite and
+dangerous default: something breaks, and the system defaults to "allow it anyway." Every error
+path in this codebase is deliberately engineered to fail closed.</p>
+</div></details>
+
+<details class="acc"><summary>Model-agnostic</summary><div class="body">
+<p>The code that talks to the LLM provider lives in exactly one file
+(<code>tools/llm.py</code>). Every other file calls one function, <code>get_chat_model()</code>,
+and has no idea whether that's Claude, Gemini, or a fake offline stand-in. Switching providers is
+an environment variable change, not a code change.</p>
+</div></details>
+
+<details class="acc"><summary>Fake model / FakeInfraGuardianModel</summary><div class="body">
+<p>An offline, zero-cost stand-in for a real LLM — a lookup table that returns a canned, coherent
+(not random) finding based on which threshold rule was breached. It's the default when no API key
+is configured, so the entire pipeline, tests, and evaluation harness run instantly, offline, for
+free. It is explicitly <i>not</i> a claim about real model quality.</p>
+</div></details>
+
+<details class="acc"><summary>Pydantic / structured output / schema-valid</summary><div class="body">
+<p>Pydantic is a Python library for defining a data shape (a "model") and automatically validating
+that incoming data matches it. "Structured output" means forcing the LLM to return JSON that fits
+one of these shapes exactly — <code>with_structured_output(SomeModel)</code> — instead of hoping
+you can parse free text. If the model's output doesn't fit, it raises an exception rather than
+silently returning something malformed.</p>
+</div></details>
+
+<details class="acc"><summary>Collector / collector abstraction</summary><div class="body">
+<p>Whatever produces a metric sample. Today it's a "simulator" replaying a scripted scenario.
+Tomorrow (not built) it could be <code>psutil</code> reading real CPU stats or <code>pynvml</code>
+reading a real GPU. Both would implement the same <code>.collect()</code> interface, so nothing
+downstream (rules, agents, orchestrator) would need to change.</p>
+</div></details>
+
+<div class="navbtns">
+<button onclick="prevSection('s2')">← Back</button>
+<button onclick="nextSection('s2')">Next: Architecture walkthrough →</button>
+</div>
+</section>
+
+<section class="section" id="s3">
+<h1>Architecture walkthrough<span class="sub">Follow one metric sample from arrival to decision.</span></h1>
+
+<div class="flow">
+<div class="node">Metric sample</div><div class="arrow">→</div>
+<div class="node">Rule pre-screen<br><span class="muted" style="font-size:11px">thresholds.py</span></div><div class="arrow">→</div>
+<div class="node">anomalous?</div><div class="arrow">→</div>
+<div class="node">Specialist agent<br><span class="muted" style="font-size:11px">(parallel, per domain)</span></div><div class="arrow">→</div>
+<div class="node">Synthesis<br><span class="muted" style="font-size:11px">cross-domain LLM call</span></div><div class="arrow">→</div>
+<div class="node">Confidence calibration</div><div class="arrow">→</div>
+<div class="node">Routing gate<br><span class="muted" style="font-size:11px">deterministic</span></div><div class="arrow">→</div>
+<div class="node">Auto-remediate / Recommend / Escalate</div>
+</div>
+
+<h3>Step 1 — the sample arrives</h3>
+<p>Every metric reading is a validated Pydantic object:
+<code>DBMetrics</code>, <code>CPUMemMetrics</code>, or <code>GPUMetrics</code>, each extending a
+shared <code>MetricSample</code> base with a timestamp, domain, and source string. Today these
+come from <code>SimulatorCollector</code> replaying a hand-authored scenario; nothing downstream
+cares where they came from (that's the point of the collector abstraction).</p>
+
+<h3>Step 2 — the rule pre-screen (no LLM yet)</h3>
+<p><code>tools/thresholds.py::evaluate(sample)</code> runs a handful of plain numeric comparisons
+specific to that domain — e.g. for DB: is p95 query latency &gt; 200ms? Is the connection pool
+over 85% utilized? Is replication lag &gt; 5s? Is the error rate &gt; 2%? It returns a
+<code>DetectionResult</code> with <code>is_anomalous: bool</code> and the specific
+<code>breached_rules</code>, each with its observed value and threshold.</p>
+<div class="callout why"><b class="tag">Why this exists before any LLM call</b>
+This is the literal enforcement of "healthy domains must never reach a specialist." It's not a
+convention someone could forget — in <code>orchestrator.py</code>, the LangGraph conditional edge
+<code>_route_anomalous_domains()</code> only returns the names of domains that are anomalous. A
+healthy domain's specialist node is structurally never invoked for that run.</div>
+
+<h3>Step 3 — specialist agents run, in parallel, only for anomalous domains</h3>
+<p>Each specialist (<code>agents/db_agent.py</code>, <code>cpu_mem_agent.py</code>,
+<code>gpu_agent.py</code>) builds a domain-specific prompt describing the breached rules and
+calls <code>get_chat_model().with_structured_output(SpecialistFinding)</code>. LangGraph fans
+these out as parallel branches — if DB and GPU are both anomalous, both specialists run
+concurrently, each writing only its own entry into a shared <code>findings</code> dict (merged
+via a custom reducer, more on that in Section 4).</p>
+<p>Every specialist returns the exact same shape — a <code>SpecialistFinding</code>: root cause
+hypothesis, severity, predictive risk, evidence list, and crucially an
+<code>automation_safety</code> verdict (<code>SAFE</code> / <code>UNSAFE</code> / <code>UNKNOWN</code>)
+with a reason. That safety verdict is what the routing gate leans on later.</p>
+
+<h3>Step 4 — synthesis: one LLM call correlates everything</h3>
+<p>If one or more specialists fired, <code>orchestrator.py::_synthesize()</code> builds one more
+prompt containing <i>all</i> the findings and asks the model to produce a
+<code>SynthesisOutput</code>: a unified root cause, a list of cross-domain correlations (each
+explicitly labeled hypothesis-or-not), overall severity, a self-reported confidence, predictive
+risk, and priority-ordered recommended actions. If zero specialists fired (everything's healthy),
+synthesis is skipped entirely — no LLM call, an instant "all healthy" report.</p>
+
+<h3>Step 5 — confidence calibration (the model doesn't get the final word)</h3>
+<p><code>tools/confidence.py::calibrate()</code> takes the model's self-reported confidence and
+caps it against a deterministic ceiling: 0.65 if only one domain is involved and that specialist
+wasn't confident it was <code>SAFE</code>; 0.95 if two-plus domains corroborate each other and
+all are <code>SAFE</code>; 0.8 otherwise. The routing gate downstream only ever sees this
+<i>calibrated</i> number.</p>
+
+<h3>Step 6 — the routing gate decides, deterministically</h3>
+<p><code>tools/routing.py::route()</code> is plain Python, checked in a fixed priority order:</p>
+<ol>
+<li><b>Severity critical?</b> → always <code>ESCALATE</code>. Full stop, no exceptions.</li>
+<li><b>Calibrated confidence &lt; 0.5?</b> → always <code>ESCALATE</code>.</li>
+<li><b>Confidence ≥ 0.8, exactly one domain affected, that specialist said SAFE, and a runbook
+exists for that domain?</b> → <code>AUTO_REMEDIATE</code>, with the specific runbook ID.</li>
+<li><b>Anything UNSAFE/UNKNOWN among contributing findings?</b> → <code>RECOMMEND</code> (SAFE
+across the board is a hard requirement for auto-remediation, not a tiebreaker).</li>
+<li><b>Two or more domains affected?</b> → <code>RECOMMEND</code>, even at high confidence —
+explained in Section 8.</li>
+<li>Otherwise → <code>RECOMMEND</code>.</li>
+</ol>
+
+<h3>Step 7 — act, or don't</h3>
+<p>Only on <code>AUTO_REMEDIATE</code> does anything execute: the orchestrator checks a SQLite
+idempotency guard, then calls the selected runbook's <code>execute()</code> (a simulated,
+logged no-op in this MVP) and writes an audit row. <code>RECOMMEND</code> and
+<code>ESCALATE</code> just populate the report's fields — nothing runs.</p>
+
+<div class="navbtns">
+<button onclick="prevSection('s3')">← Back</button>
+<button onclick="nextSection('s3')">Next: The build story →</button>
+</div>
+</section>
+
+<section class="section" id="s4">
+<h1>The build story<span class="sub">What we did, in what order, and why — plus what actually broke.</span></h1>
+
+<p>This was scoped into five milestones (see <code>MILESTONES.md</code>), each ending in something
+demoable, each mapped to a subset of the PRD's 13-phase build plan. The sequencing itself was a
+decision, not an accident:</p>
+
+<table>
+<tr><th>Milestone</th><th>What it built</th><th>Why this grouping</th></tr>
+<tr><td><b>M1</b> — walking skeleton</td><td>Metric contracts, collector abstraction, 12 scenarios,
+rule pre-screen</td><td>Zero LLM dependency — cheapest place to catch contract mistakes before
+agents depend on them.</td></tr>
+<tr><td><b>M2</b> — agentic core</td><td>Model-agnostic LLM factory, 3 specialist agents, LangGraph
+orchestrator (fan-out/fan-in), synthesis</td><td>Highest-risk milestone (LangGraph + concurrency +
+synthesis quality) — called out explicitly so slack gets allocated here first.</td></tr>
+<tr><td><b>M3</b> — safety &amp; action layer</td><td>Confidence calibration, routing gates, 3
+allowlisted runbooks, SQLite incident store, fail-closed error handling</td><td>Every PRD §9
+safety invariant becomes real enforced code here — treated as a checklist, not just "it runs."</td></tr>
+<tr><td><b>M4</b> — interfaces</td><td>FastAPI <code>POST /analyze</code>, CLI</td><td>Deliberately
+small — interfaces are thin wrappers once M1–M3 exist.</td></tr>
+<tr><td><b>M5</b> — proof &amp; polish</td><td>104-case evaluation harness, observability, tests,
+README</td><td>Explicitly protected from compression — PRD frames evaluation results and safety
+behavior as <i>the</i> portfolio pitch, not supporting detail.</td></tr>
+</table>
+
+<h3>Decisions worth being able to defend out loud</h3>
+
+<details class="acc" open><summary>Why a fake, offline LLM by default? <span class="pill">Judgment call</span></summary>
+<div class="body"><p>Early on, the LLM layer was required to be provider-agnostic (the user was
+still finalizing an API key and might switch providers for cost). Rather than block all
+development on that key, <code>FakeInfraGuardianModel</code> was built as the default: a
+deterministic lookup table keyed on breached-rule names, returning coherent canned findings. This
+means the entire pipeline, test suite (79 tests), and evaluation harness run instantly, for free,
+with no network access — which is also why CI never needs a secret to pass. It is explicitly
+documented as <i>not</i> simulating real reasoning quality.</p></div></details>
+
+<details class="acc"><summary>Why is routing a plain function, not an LLM call?</summary>
+<div class="body"><p>Because it's the single most safety-critical decision in the system. An LLM
+call can hallucinate, drift, or be miscalibrated. A plain Python function with fixed
+if/elif branches, operating only on already-validated structured data, cannot — it's exhaustively
+testable (see Section 7's "safety invariant checklist" tests) and has no non-determinism to
+account for.</p></div></details>
+
+<details class="acc"><summary>Why does confidence get capped instead of trusted?</summary>
+<div class="body"><p>Because a hallucinated or miscalibrated confidence number flowing straight
+into the auto-remediate gate is exactly the "fail open" failure mode the project's safety
+invariants exist to prevent. The calibration layer treats the model's number as a signal, not an
+authority — it can only be capped <i>down</i> from what a deterministic rule-based ceiling allows,
+never boosted up.</p></div></details>
+
+<details class="acc"><summary>What actually broke during implementation? <span class="pill gap">Real debugging</span></summary>
+<div class="body">
+<p>Good interview material — these are things that only surfaced once code actually ran:</p>
+<ul>
+<li><b>LangGraph's merge requirement.</b> The first cut of the orchestrator had every specialist
+node read-modify-write a shared <code>findings</code> dict directly. Running two specialists
+concurrently (the two-domain test case) raised <code>InvalidUpdateError: Can receive only one
+value per step</code>. Fix: give <code>findings</code> an explicit reducer
+(<code>Annotated[dict, _merge_findings]</code>) so each node only returns its own single-key
+update and LangGraph merges the branches itself.</li>
+<li><b><code>StrEnum</code> membership checks don't do what you'd expect.</b>
+<code>f.get("severity") in Severity</code> raised a <code>TypeError</code> — <code>StrEnum</code>
+gives you string <i>equality</i>, not automatic <code>in</code>-membership against the enum class.
+Fixed by checking against <code>{s.value for s in Severity}</code> instead.</li>
+<li><b>The fake model's canned confidence couldn't clear the auto-remediate bar.</b> With the
+original canned value, the single most important demo (auto-remediation actually firing)
+couldn't be shown without a real API key. Fixed by raising the fake model's single-domain
+canned confidence from 0.75 to 0.9, keeping multi-domain confidence lower since those cases are
+routed to RECOMMEND regardless.</li>
+<li><b>Fail-closed sentinel severity had to be CRITICAL, not HIGH.</b> The first draft used
+<code>HIGH</code> severity for a failed specialist/synthesis call. During implementation it
+became clear that <code>HIGH</code> + <code>UNKNOWN</code> safety could still combine with a
+different domain's valid high-confidence finding and land outside the escalate path in some
+multi-domain cases. <code>CRITICAL</code> unconditionally trips the "critical never
+auto-remediates" gate (checked first, period) regardless of anything else — the stronger
+guarantee the safety requirement actually calls for.</li>
+<li><b>Pydantic discriminated unions don't work with <code>StrEnum</code> fields.</b> The FastAPI
+request schema tried to use <code>domain: Domain</code> as a discriminator, but Pydantic v2's
+discriminated-union feature requires a <code>Literal</code> type there. Fixed with a plain
+<code>Union[DBMetrics, CPUMemMetrics, GPUMetrics]</code> — Pydantic's "smart mode" matching works
+fine since each domain's model has non-overlapping required fields.</li>
+</ul>
+</div></details>
+
+<div class="navbtns">
+<button onclick="prevSection('s4')">← Back</button>
+<button onclick="nextSection('s4')">Next: File-by-file tour →</button>
+</div>
+</section>
+
+<section class="section" id="s5">
+<h1>File-by-file tour<span class="sub">What each script is for, and the one or two functions that matter in it.</span></h1>
+
+<p>Read these roughly in dependency order — each one builds on the ones before it.</p>
+
+<div class="fileheader">tools/metrics.py</div>
+<div class="card"><p><b>What it is:</b> the typed contracts for every metric sample —
+<code>Domain</code> (a <code>StrEnum</code>: <code>DB</code>, <code>CPU_MEM</code>, <code>GPU</code>),
+<code>MetricSample</code> (shared base: timestamp, domain, source string), and three domain
+subclasses (<code>DBMetrics</code>, <code>CPUMemMetrics</code>, <code>GPUMetrics</code>) each with
+their own numeric fields and Pydantic range constraints (e.g. percentages bounded 0–100).</p>
+<p><b>Why it matters:</b> this is the ingestion boundary. Malformed data fails here, immediately,
+with a clear Pydantic error — not three layers deeper inside a specialist agent.</p></div>
+
+<div class="fileheader">tools/collectors.py</div>
+<div class="card"><p><b>What it is:</b> <code>MetricCollector</code>, a structural
+<code>Protocol</code> (not a base class) requiring just one method, <code>.collect()</code>.
+<code>SimulatorCollector</code> is the only implementation — it replays a fixed list of samples
+one at a time, raising <code>StopIteration</code> when exhausted.</p>
+<p><b>Why it matters:</b> this is the literal swap point for going from simulated to real
+infrastructure. A real collector (psutil for CPU/mem, pynvml for GPU) just needs to expose the
+same <code>.collect()</code> method — nothing in the rule engine, agents, or orchestrator would
+need to change.</p></div>
+
+<div class="fileheader">tools/scenarios.py</div>
+<div class="card"><p><b>What it is:</b> 12 hand-authored scenarios (4 per domain: 1 healthy + 3
+degraded), each a literal fixed list of samples with an explicit numeric trajectory — no random
+number generation anywhere. E.g. <code>_db_slow_query_degradation()</code> hard-codes 8 timestamps
+with p95 latency climbing <code>50 → 70 → 110 → 180 → 260 → 340 → 410 → 460</code>.</p>
+<p><b>Why it matters:</b> determinism here is a <i>literal</i> property — "run it twice, get the
+exact same thing" — not something that depends on correctly reproducing a random seed. That's a
+much easier thing to defend ("the trajectory is spelled out in code, there's nothing to
+reproduce") than a seeded RNG would be.</p></div>
+
+<div class="fileheader">tools/thresholds.py</div>
+<div class="card"><p><b>What it is:</b> the deterministic rule pre-screen. Named threshold
+constants per domain (e.g. <code>DB_LATENCY_P95_MS_MAX = 200.0</code>, <code>GPU_ECC_ERRORS_MAX =
+0</code>), one <code>_evaluate_*</code> function per domain returning a list of
+<code>BreachedRule</code>s, and the public entry point <code>evaluate(sample) -&gt;
+DetectionResult</code>.</p>
+<p><b>Why it matters:</b> this file has zero imports of any agent or LLM code — on purpose. It's
+the enforcement point for "healthy domains never reach an LLM," not just a convention someone
+could accidentally violate by importing the wrong thing.</p></div>
+
+<div class="fileheader">agents/schemas.py</div>
+<div class="card"><p><b>What it is:</b> every shared Pydantic contract: <code>Severity</code>,
+<code>AutomationSafety</code>, <code>RoutingDecision</code> (all <code>StrEnum</code>s),
+<code>SpecialistFinding</code> (one specialist's output), <code>CrossDomainCorrelation</code>,
+<code>SynthesisOutput</code> (what the synthesis LLM call produces), and
+<code>IncidentReport</code> (the final, canonical output every other layer — API, CLI, eval
+harness — is built against).</p>
+<p><b>Why it matters:</b> every LLM call in the project is bound to one of these models via
+<code>with_structured_output()</code>. "Schema-valid output" isn't a hope, it's enforced — a
+model that can't produce a valid instance raises an exception during <code>.invoke()</code>.</p></div>
+
+<div class="fileheader">tools/llm.py</div>
+<div class="card"><p><b>What it is:</b> the one and only module allowed to import a
+provider-specific LangChain package. <code>get_chat_model()</code> reads the
+<code>INFRAGUARDIAN_MODEL</code> env var and either calls LangChain's
+<code>init_chat_model("provider:model")</code> or, if unset, returns
+<code>FakeInfraGuardianModel</code> — an offline lookup table
+(<code>_RULE_INFO</code>) keyed on breached-rule names, with regex parsing
+(<code>_build_specialist_finding</code>, <code>_build_synthesis_output</code>) that reads the
+prompt text back out to decide what canned finding to return.</p>
+<p><b>Why it matters:</b> this is the actual mechanism behind "model-agnostic" — not a design
+claim, a one-file chokepoint everything else calls through.</p></div>
+
+<div class="fileheader">agents/{db,cpu_mem,gpu}_agent.py</div>
+<div class="card"><p><b>What it is:</b> three nearly-identical files, each with one function,
+<code>diagnose(sample, detection) -&gt; SpecialistFinding</code>. Each builds a domain-specific
+prompt describing the breached rules and observed values, then calls
+<code>get_chat_model().with_structured_output(SpecialistFinding)</code>.</p>
+<p><b>Why it matters:</b> each agent has no opinion about <i>when</i> it runs — that's the
+orchestrator's job entirely. This separation is what makes "a healthy domain never invokes its
+specialist" enforceable from outside the agent itself.</p></div>
+
+<div class="fileheader">tools/confidence.py</div>
+<div class="card"><p><b>What it is:</b> one function, <code>calibrate(synthesis_confidence,
+findings, correlations) -&gt; float</code>. Returns <code>min(synthesis_confidence, cap)</code>
+where <code>cap</code> is 0.65 / 0.8 / 0.95 depending on domain count and automation-safety
+agreement (see Section 3, Step 5).</p>
+<p><b>Why it matters:</b> pure function, zero LLM dependency, trivially unit-testable — the kind
+of code you want sitting directly upstream of a safety gate.</p></div>
+
+<div class="fileheader">tools/routing.py</div>
+<div class="card"><p><b>What it is:</b> one function, <code>route(report, findings) -&gt;
+RoutingResult</code>, implementing the FR-12–14 gates as a fixed-priority if/elif chain (see
+Section 3, Step 6). Returns a decision, a human-readable reason string, and (if applicable) the
+runbook ID to execute.</p>
+<p><b>Why it matters:</b> this is the file where "critical never auto-remediates" and
+"low-confidence fails closed" are literal, checked-first lines of code, not aspirations.</p></div>
+
+<div class="fileheader">tools/remediation.py</div>
+<div class="card"><p><b>What it is:</b> the allowlist. <code>RUNBOOKS: dict[str, Runbook]</code>
+has exactly three entries — <code>db.recycle_connection_pool</code>,
+<code>cpu_mem.restart_worker_process</code>, <code>gpu.clear_memory_cache</code> — each a frozen
+dataclass holding an <code>execute()</code> callable. <code>get_runbook_for_domain()</code> is a
+simple 1:1 lookup.</p>
+<p><b>Why it matters:</b> the LLM/routing layer can only ever select a runbook <i>ID string</i>
+from this fixed dict. There's no code path anywhere that takes LLM-generated text and executes
+it. Execution itself is simulated — logs what it would do, returns a canned success — which is
+stated plainly, not hidden (see Section 8).</p></div>
+
+<div class="fileheader">storage/incident_store.py</div>
+<div class="card"><p><b>What it is:</b> a thin, direct <code>sqlite3</code> wrapper, no ORM. Two
+tables: <code>incidents</code> (full report as JSON + indexed columns) and
+<code>remediation_actions</code> (the audit log, with a <code>UNIQUE(incident_id, runbook_id)</code>
+constraint). Functions: <code>save_incident</code>, <code>get_incident</code>,
+<code>was_already_executed</code>, <code>record_remediation_action</code>.</p>
+<p><b>Why it matters:</b> the <code>UNIQUE</code> constraint is the actual idempotency
+mechanism — not an in-memory check that could race or reset, a database-level guarantee.</p></div>
+
+<div class="fileheader">orchestrator.py</div>
+<div class="card"><p><b>What it is:</b> the whole thing wired together as a LangGraph
+<code>StateGraph</code>. Key functions: <code>_screen</code> (runs the rule pre-screen for every
+domain present), <code>_route_anomalous_domains</code> (the conditional edge deciding which
+specialist nodes actually fire), <code>_make_specialist_node</code> (wraps a specialist call in a
+try/except that produces a fail-closed <code>_sentinel_finding</code> on any exception),
+<code>_synthesize</code> (builds the cross-domain prompt, calls the model, calibrates confidence,
+assembles the <code>IncidentReport</code>), and <code>_route_and_remediate</code> (calls
+<code>route()</code>, and on <code>AUTO_REMEDIATE</code>, checks idempotency and executes the
+runbook). The public entry point is <code>run_incident(samples, persist=True)</code>.</p>
+<p><b>Why it matters:</b> this file is the answer to "how does it all fit together" — read
+<code>_build_graph()</code> at the bottom first to see the five-node graph shape, then read each
+node function in the order the graph calls them.</p></div>
+
+<div class="fileheader">api/server.py &amp; cli/main.py</div>
+<div class="card"><p><b>What they are:</b> two thin interfaces onto the same
+<code>run_incident()</code> call. FastAPI exposes <code>POST /analyze</code> (scenarios and/or raw
+samples in one body), <code>GET /health</code>, <code>GET /metrics</code>. The CLI exposes
+<code>list</code>, <code>analyze</code>, <code>metrics</code> subcommands via argparse.</p>
+<p><b>Why it matters:</b> neither has any pipeline logic of its own — they validate input (via
+Pydantic/argparse) and call the orchestrator. That's deliberate: interfaces shouldn't duplicate
+business logic.</p></div>
+
+<div class="fileheader">tools/observability.py</div>
+<div class="card"><p><b>What it is:</b> <code>_MetricsRecorder</code>, a thread-safe (via
+<code>threading.Lock</code>), in-memory singleton (<code>RECORDER</code>) that the orchestrator
+writes to on every specialist/synthesis call and every completed incident.
+<code>snapshot()</code> computes failure rate, per-agent average latency, end-to-end p50/p95
+latency, routing-decision distribution, and confidence distribution on demand.</p>
+<p><b>Why it matters:</b> the lock exists specifically because specialists run as <i>concurrent</i>
+LangGraph branches — without it, two domains finishing at the same instant could corrupt the
+recorder's internal lists.</p></div>
+
+<div class="fileheader">evaluation/evaluator.py &amp; evaluation/fixtures/*.py</div>
+<div class="card"><p><b>What it is:</b> <code>run_evaluation()</code> runs 87 hand-derived
+detection-accuracy cases and 17 hand-derived incident cases against the live rule engine and
+orchestrator (patched to use the fake model), computing the PRD §10 metrics table. Fixtures were
+derived by hand-tracing the scenario data through the threshold/calibration/routing logic — not
+generated by running the code being tested (see Section 7 for why that distinction matters).</p>
+<p><b>Why it matters:</b> this is the thing that turns "it works" into "here's the measured
+number, and here's proof the measurement isn't circular."</p></div>
+
+<div class="navbtns">
+<button onclick="prevSection('s5')">← Back</button>
+<button onclick="nextSection('s5')">Next: Safety deep-dive →</button>
+</div>
+</section>
+
+<section class="section" id="s6">
+<h1>Safety deep-dive<span class="sub">Every PRD §9 invariant, and exactly where it lives in code.</span></h1>
+
+<p>These are the rules the whole project is built around. Each one maps to a specific, named
+piece of code — if an interviewer asks "how do you know X is actually true, not just stated,"
+this is your answer for each.</p>
+
+<table>
+<tr><th>Invariant</th><th>Where it's enforced</th><th>How you'd prove it</th></tr>
+<tr><td>No arbitrary code/shell execution from model output</td>
+<td><code>tools/remediation.py</code> — <code>RUNBOOKS</code> dict</td>
+<td>The LLM only ever outputs a <code>SpecialistFinding</code>/<code>SynthesisOutput</code>
+Pydantic object — there's no field anywhere in those schemas for "command to run." Runbook
+<code>execute</code> callables are fixed Python functions defined in this file, period.</td></tr>
+<tr><td>Every executable action maps to a predefined allowlist entry</td>
+<td><code>tools/routing.py::route()</code> + <code>tools/remediation.py::get_runbook_for_domain()</code></td>
+<td>Routing only ever returns a <code>runbook_id</code> that already exists as a key in
+<code>RUNBOOKS</code> — it's a dict lookup, not a constructed string.</td></tr>
+<tr><td>Critical-severity incidents never auto-remediate</td>
+<td><code>tools/routing.py::route()</code>, line 1 of the function</td>
+<td><code>test_routing.py</code> has an explicit case for this; it's checked <i>before</i> confidence
+or safety are even looked at.</td></tr>
+<tr><td>Low-confidence findings fail closed</td>
+<td><code>tools/routing.py::route()</code>, checked second, unconditionally</td>
+<td>Confidence &lt; 0.5 → <code>ESCALATE</code>, regardless of severity or safety.</td></tr>
+<tr><td>Malformed/missing LLM output fails closed</td>
+<td><code>orchestrator.py::_sentinel_finding</code> / <code>_sentinel_synthesis_output</code></td>
+<td>Both sentinels force <code>Severity.CRITICAL</code> — which the routing gate above
+unconditionally escalates. A forced-failure test in <code>test_orchestrator.py</code> monkeypatches
+a specialist to raise and confirms the pipeline still completes and escalates, rather than
+crashing or defaulting to action.</td></tr>
+<tr><td>Tool/API failures represented explicitly, never swallowed</td>
+<td>Same sentinel functions — the error text itself is embedded in
+<code>root_cause_hypothesis</code>/<code>evidence</code>, not discarded</td>
+<td>Read a sentinel-triggered report's JSON — the actual exception message is visible in the
+output.</td></tr>
+<tr><td>Causal claims labeled hypothesis unless measured</td>
+<td><code>agents/schemas.py::CrossDomainCorrelation.is_causal_hypothesis</code>, defaults
+<code>True</code></td>
+<td>The synthesis prompt instructs the model to only set this <code>False</code> when evidence
+directly measures a causal link, not mere co-occurrence.</td></tr>
+<tr><td>Remediations idempotent / guarded against duplicate execution</td>
+<td><code>storage/incident_store.py</code> — <code>UNIQUE(incident_id, runbook_id)</code> +
+<code>was_already_executed()</code> checked before every <code>execute()</code> call</td>
+<td><code>test_incident_store.py</code> round-trips this directly: false before execution, true
+after.</td></tr>
+<tr><td>Auto-remediation gate: confidence ≥ 0.8 AND safe allowlist action AND severity &lt; critical</td>
+<td><code>tools/routing.py::route()</code>, the single <code>AUTO_REMEDIATE</code> branch</td>
+<td>All three conditions are in one <code>if</code> statement — there's no code path that can
+trigger auto-remediation satisfying only two of the three.</td></tr>
+</table>
+
+<div class="callout safety">
+<b class="tag">The one demo that proves it, end to end</b>
+Run the <code>gpu_ecc_errors</code> scenario. The fake model reports confidence 0.65 for that
+finding — comfortably inside what <i>would</i> be an auto-remediate range if severity weren't
+considered. But ECC errors are hard-mapped to <code>Severity.CRITICAL</code>
+(<code>tools/llm.py</code>'s <code>_RULE_INFO</code>), and the routing gate checks severity
+<i>first, unconditionally</i>. Result: <code>routing_decision: "escalate"</code>, no runbook
+executed, no auto-remediation — even though confidence alone wouldn't have blocked it. This is
+the single most important thing to show working in an interview, because it's the one case
+where two signals disagree and the safety gate still wins.
+</div>
+
+<div class="navbtns">
+<button onclick="prevSection('s6')">← Back</button>
+<button onclick="nextSection('s6')">Next: How we proved it works →</button>
+</div>
+</section>
+
+<section class="section" id="s7">
+<h1>How we proved it works<span class="sub">The evaluation harness, the numbers, and why they're not circular.</span></h1>
+
+<h3>The core idea the harness has to get right</h3>
+<p>It's trivially easy to build an "evaluation" that always reports 100% — just generate expected
+answers by running the code you're testing and recording whatever it returned. That would catch
+nothing. The fixtures here are built the opposite way: <code>evaluation/fixtures/detection_cases.py</code>'s
+87 cases and <code>evaluation/fixtures/incident_cases.py</code>'s 17 cases were derived by hand —
+tracing each scenario's literal numeric trajectory (from <code>tools/scenarios.py</code>) against
+the threshold constants (<code>tools/thresholds.py</code>) and the fake model's canned rule table,
+calibration formula, and routing gates, entirely independently of running the pipeline. If a real
+bug landed in the threshold constants or the routing logic, this harness would actually catch it.</p>
+
+<h3>Measured results (fake model, this fixture set)</h3>
+<table>
+<tr><th>Metric</th><th>PRD target</th><th>Measured</th></tr>
+<tr><td>Detection accuracy</td><td>≥ 95%</td><td>100%</td></tr>
+<tr><td>RCA accuracy</td><td>≥ 85%</td><td>100%</td></tr>
+<tr><td>Routing accuracy</td><td>≥ 95%</td><td>100%</td></tr>
+<tr><td>False auto-remediations</td><td>0</td><td>0</td></tr>
+<tr><td>Schema validity</td><td>≥ 99%</td><td>100%</td></tr>
+<tr><td>Latency p50 / p95</td><td>—</td><td>~1ms / ~3ms (fake model, no network)</td></tr>
+</table>
+<div class="callout why"><b class="tag">Say this part out loud in an interview</b>
+These are measured numbers against this project's own fixtures and the offline fake model — not a
+production claim. The latency numbers in particular mean almost nothing on their own (no network
+round-trip); what they prove is that the orchestration/routing/calibration machinery itself adds
+negligible overhead. Real-provider latency and cost are an explicitly deferred follow-up (see
+Section 8) — not because they're unimportant, but because the model-agnostic design means
+turning that on is a config change, not new code.</div>
+
+<h3>What the test suite covers (79 tests)</h3>
+<p>Beyond the eval harness: metric contracts, the rule engine (every scenario's first and last
+sample classified correctly — "scenarios start healthy and degrade" as an executable invariant),
+the fake model, specialist agents, LangGraph fan-out/fan-in and synthesis, confidence calibration,
+<b>a dedicated table-driven routing test file that is effectively a safety-invariant checklist</b>
+(critical-never-auto-remediates and low-confidence-always-escalates are explicit named test cases,
+not incidental coverage), remediation runbooks, incident-store idempotency, the orchestrator's
+fail-closed behavior on a raising specialist, the API, and the evaluation harness itself — all
+offline, no network or API key required, which is also what makes this safe to run in CI with
+zero secrets.</p>
+
+<div class="navbtns">
+<button onclick="prevSection('s7')">← Back</button>
+<button onclick="nextSection('s7')">Next: Scope vs. gaps →</button>
+</div>
+</section>
+
+<section class="section" id="s8">
+<h1>Scope vs. gaps, untangled<span class="sub">The distinction that was genuinely confusing — here's the clean version.</span></h1>
+
+<p>There are two completely different kinds of "not done" in this project, and conflating them
+makes you sound like you don't understand your own design. Here's the test: <b>ask "did the PRD
+say we're explicitly not doing this, or did we just not get to it because this isn't a 24/7
+deployed service?"</b> Those are different answers to "why isn't X here," and interviewers can
+tell the difference.</p>
+
+<div class="grid2">
+<div class="card">
+<h4><span class="pill unsafe">Deliberately out of scope</span></h4>
+<p>Things the PRD says, up front, <b>"we are not building this, on purpose"</b> — a design
+decision, not a shortfall. If asked "why doesn't it do X," the right answer is "because doing X
+would violate the thing this project is actually trying to demonstrate (bounded autonomy), not
+because we ran out of time."</p>
+<ul>
+<li>No arbitrary shell/code execution by the model — ever, by design, not "not yet."</li>
+<li>No fully-autonomous remediation of critical incidents — the safety gate structurally
+prevents this.</li>
+<li>No real PagerDuty/Slack integration — stated as out of MVP scope from day one.</li>
+<li>No model training or fine-tuning — this project is about orchestration and safety
+engineering around an LLM, not about the LLM itself.</li>
+<li>Not a Datadog/Grafana replacement — it's an incident-response decision layer, not a metrics
+platform.</li>
+</ul>
+</div>
+<div class="card">
+<h4><span class="pill gap">Gap because it's a portfolio build</span></h4>
+<p>Things that would be <b>required before this could run as a real, trusted, 24/7 service</b>,
+but weren't built because this is a demonstration of engineering judgment, not a product with
+production SLAs and real users. If asked about these, the right answer is "yes, that's a known
+gap, here's exactly what I'd need to add and why I didn't need it to prove the point this project
+is making."</p>
+<ul>
+<li>No auth or rate-limiting on the FastAPI endpoints.</li>
+<li>SQLite is single-writer — fine for one process, not for horizontally-scaled replicas
+(Postgres is the PRD's own stated post-MVP path).</li>
+<li>No CI pipeline wired up (even though the test suite is fully offline and CI-ready).</li>
+<li>No secrets management (API keys are plain env vars).</li>
+<li>No structured logging / log aggregation across replicas.</li>
+<li>Observability is in-memory per-process — restarting the process loses it, and it wouldn't
+aggregate across multiple replicas.</li>
+<li>No retry/backoff on transient LLM API failures — a transient failure fails closed to
+escalate, which is <i>safe</i>, but a production service would want a retry first.</li>
+<li>Thresholds and the confidence-calibration formula are judgment calls defensible for this
+project's scenarios, not baselined against real historical incident data.</li>
+</ul>
+</div>
+</div>
+
+<div class="callout why">
+<b class="tag">The one-line version to say in an interview</b>
+"The non-goals are architectural boundaries I designed around — building past them would
+undermine the point of the project. The portfolio gaps are operational hardening I'd add before
+trusting this with real traffic — none of them require re-architecting anything, because the
+collector abstraction and model-agnostic LLM layer were built specifically so that hardening is
+additive, not a rewrite."
+</div>
+
+<h3>Why this split matters for how the code is organized</h3>
+<p>Notice that almost every "portfolio gap" above is <i>infrastructure around</i> the core
+pipeline (auth, logging, retries, a real database), while every "deliberately out of scope" item
+is a <i>property of the pipeline's own design</i> (what the LLM is and isn't allowed to touch).
+That's not a coincidence — it's exactly the collector-abstraction and allowlist patterns doing
+their job: the core safety-critical logic doesn't need to change to add the missing operational
+layer later.</p>
+
+<div class="navbtns">
+<button onclick="prevSection('s8')">← Back</button>
+<button onclick="nextSection('s8')">Next: Interview Q&amp;A →</button>
+</div>
+</section>
+
+<section class="section" id="s9">
+<h1>Interview Q&amp;A rehearsal<span class="sub">Click a question, think of your answer, then check it.</span></h1>
+
+<p class="muted">These are the questions this project is actually built to answer well. Try to
+answer out loud before revealing — that's the whole point of rehearsing.</p>
+
+<div class="quiz">
+<b>Q: Walk me through what happens when a metric comes in.</b>
+<div><button onclick="revealAnswer(this)">Show answer</button>
+<div class="answer">It's validated against a Pydantic contract (DBMetrics/CPUMemMetrics/GPUMetrics),
+then run through a deterministic threshold check with no LLM involved. Only if a threshold is
+breached does it reach a specialist LLM agent — healthy metrics never cost a token or risk a
+hallucinated problem.</div></div>
+</div>
+
+<div class="quiz">
+<b>Q: How do you know the LLM can't do something dangerous?</b>
+<div><button onclick="revealAnswer(this)">Show answer</button>
+<div class="answer">The LLM's only outputs are schema-validated Pydantic objects (findings, a
+synthesis) — there's no field for "command to run." The actual decision to act, and which action,
+is made by a separate deterministic function that selects from a fixed allowlist dict defined in
+code. The LLM can at most <i>select</i> an ID from that list; it has no path to construct new
+executable behavior.</div></div>
+</div>
+
+<div class="quiz">
+<b>Q: What happens if the LLM call fails or times out?</b>
+<div><button onclick="revealAnswer(this)">Show answer</button>
+<div class="answer">The orchestrator wraps every LLM call in a try/except. On failure, it
+constructs a "sentinel" finding/synthesis object with severity forced to CRITICAL and the actual
+exception message embedded in the evidence — so the failure is visible, not swallowed — and
+CRITICAL severity unconditionally routes to ESCALATE. The system never defaults to inaction being
+silently misreported as "healthy," and never defaults to auto-remediating on uncertain data.</div></div>
+</div>
+
+<div class="quiz">
+<b>Q: Why is routing not itself an LLM call?</b>
+<div><button onclick="revealAnswer(this)">Show answer</button>
+<div class="answer">Because it's the single highest-stakes decision in the system, and
+LLM calls introduce exactly the kind of nondeterminism and potential-for-hallucination you don't
+want at that point. Routing runs after structured parsing has already either succeeded or been
+replaced by a fail-closed sentinel — there's nothing left for malformed output to corrupt at that
+stage, which is exactly why it's safe to make it a plain, exhaustively-testable function.</div></div>
+</div>
+
+<div class="quiz">
+<b>Q: How did you validate accuracy, not just "it runs"?</b>
+<div><button onclick="revealAnswer(this)">Show answer</button>
+<div class="answer">A 104-case evaluation harness where expected results were hand-derived
+independently from the code under test — by tracing scenario data through the threshold
+constants and routing logic by hand, not by running the pipeline and recording its own output.
+That's the difference between a real regression test and a tautology.</div></div>
+</div>
+
+<div class="quiz">
+<b>Q: What's the biggest limitation of the current MVP?</b>
+<div><button onclick="revealAnswer(this)">Show answer</button>
+<div class="answer">Cross-domain incidents always route to RECOMMEND at minimum, even at high
+confidence with every contributing finding marked SAFE — because a single runbook only ever
+targets one domain, and auto-executing one domain's fix while leaving a corroborated second
+domain unaddressed is a scope mismatch this MVP doesn't attempt to solve. That's a deliberate,
+documented MVP boundary, not an oversight.</div></div>
+</div>
+
+<div class="quiz">
+<b>Q: What would you need before this could run against real infrastructure?</b>
+<div><button onclick="revealAnswer(this)">Show answer</button>
+<div class="answer">Swap SimulatorCollector for real collectors (psutil/pynvml/DB status
+queries) implementing the same .collect() Protocol — no change needed to the rule engine, agents,
+or orchestrator, because that boundary was built to be swappable from the start. Separately,
+operational hardening: auth on the API, Postgres instead of SQLite for multi-replica writes, a
+real retry/backoff policy on LLM calls, and thresholds re-baselined from real historical incident
+data instead of judgment calls.</div></div>
+</div>
+
+<div class="quiz">
+<b>Q: Why build a fake offline model instead of just requiring an API key?</b>
+<div><button onclick="revealAnswer(this)">Show answer</button>
+<div class="answer">So the entire pipeline, 79-test suite, and evaluation harness run instantly,
+for free, with zero network dependency — which also means CI never needs a secret to pass. It's
+explicitly documented as a lookup table, not a claim about real LLM reasoning quality; real
+reasoning quality is a separate, not-yet-measured question deferred until a provider key is
+configured, which the model-agnostic design makes a config change, not a rebuild.</div></div>
+</div>
+
+<div class="quiz">
+<b>Q: What's one thing that broke during development that taught you something non-obvious?</b>
+<div><button onclick="revealAnswer(this)">Show answer</button>
+<div class="answer">LangGraph requires an explicit merge/reducer function for any state key more
+than one parallel node writes to. The first version had specialist nodes read-modify-write a
+shared dict directly, which raised InvalidUpdateError the moment two specialists ran concurrently.
+The fix — give the state key an Annotated reducer and have each node return only its own
+single-key update — is the concrete mechanic behind "parallel execution isn't free, it needs
+explicit state-merge semantics."</div></div>
+</div>
+
+<div class="callout">
+<b class="tag">One last thing</b>
+You don't need to memorize this page. You need to be able to re-derive the architecture diagram
+from Section 3 on a whiteboard, and know which file each box corresponds to. Everything else —
+the "why," the gaps, the war stories — follows naturally once you can draw that picture and point
+at real code for each box.
+</div>
+
+<div class="navbtns">
+<button onclick="prevSection('s9')">← Back</button>
+<span></span>
+</div>
+</section>
+
+  </main>
+</div>
+<script>
+const SECTIONS = ["s1","s2","s3","s4","s5","s6","s7","s8","s9"];
+function showSection(id){
+  document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  document.querySelectorAll('.sidebar a').forEach(a=>a.classList.remove('active'));
+  document.querySelector(`.sidebar a[data-target="${id}"]`).classList.add('active');
+  const idx = SECTIONS.indexOf(id);
+  document.getElementById('progressBar').style.width = ((idx+1)/SECTIONS.length*100)+'%';
+  window.scrollTo(0,0);
+  localStorage.setItem('ig_learn_pos', id);
+}
+document.querySelectorAll('.sidebar a').forEach(a=>{
+  a.addEventListener('click', ()=> showSection(a.dataset.target));
+});
+function nextSection(id){
+  const idx = SECTIONS.indexOf(id);
+  if(idx < SECTIONS.length-1) showSection(SECTIONS[idx+1]);
+}
+function prevSection(id){
+  const idx = SECTIONS.indexOf(id);
+  if(idx > 0) showSection(SECTIONS[idx-1]);
+}
+function revealAnswer(btn){
+  const ans = btn.nextElementSibling;
+  ans.classList.toggle('shown');
+  btn.textContent = ans.classList.contains('shown') ? 'Hide answer' : 'Show answer';
+}
+window.addEventListener('DOMContentLoaded', ()=>{
+  const saved = localStorage.getItem('ig_learn_pos');
+  showSection(saved && SECTIONS.includes(saved) ? saved : 's1');
+});
+</script>
+</body>
+</html>
