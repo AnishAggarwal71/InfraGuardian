@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>InfraGuardian — High-Level System Design</title>
+<style>
+  :root { color-scheme: light; }
+  .viz-root {
+    --surface-1:      #fcfcfb;
+    --page-plane:     #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --grid:           #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --series-db:      #2a78d6; /* blue   */
+    --series-cpu:     #eb6834; /* orange */
+    --series-gpu:     #1baf7a; /* aqua   */
+    --good:           #0ca30c;
+    --warning:        #fab219;
+    --critical:       #d03b3b;
+    --box-fill:       #ffffff;
+    --box-fill-dim:   #f3f2ef;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --page-plane:     #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --grid:           #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --series-db:      #3987e5;
+      --series-cpu:     #d95926;
+      --series-gpu:     #199e70;
+      --good:           #0ca30c;
+      --warning:        #fab219;
+      --critical:       #e66767;
+      --box-fill:       #232322;
+      --box-fill-dim:   #1f1f1e;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --page-plane:     #0d0d0d;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --grid:           #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --series-db:      #3987e5;
+    --series-cpu:     #d95926;
+    --series-gpu:     #199e70;
+    --good:           #0ca30c;
+    --warning:        #fab219;
+    --critical:       #e66767;
+    --box-fill:       #232322;
+    --box-fill-dim:   #1f1f1e;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body.viz-root {
+    background: var(--page-plane);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 24px 16px 48px;
+  }
+
+  header { max-width: 1200px; width: 100%; margin-bottom: 10px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 14px; }
+
+  .toolbar { display:flex; gap:8px; align-items:center; margin-bottom: 12px; }
+  button.ctrl {
+    font: inherit; font-size: 12px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--box-fill);
+    color: var(--text-primary); border-radius: 6px; padding: 6px 10px;
+  }
+  button.ctrl:hover { background: var(--box-fill-dim); }
+
+  .stage {
+    position: relative;
+    width: 100%;
+    max-width: 1200px;
+    aspect-ratio: 1500 / 860;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  svg.links { position:absolute; inset:0; width:100%; height:100%; display:block; }
+
+  .node {
+    position: absolute;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    background: var(--box-fill);
+    padding: 6px 10px;
+    font-size: 12.5px;
+    line-height: 1.25;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    transition: box-shadow .2s, border-color .2s, background .2s;
+  }
+  .node .t { font-weight: 600; color: var(--text-primary); }
+  .node .s { color: var(--text-secondary); font-size: 10.5px; display:block; margin-top:2px; }
+  .node.dim { opacity: .55; }
+  .node.active {
+    box-shadow: 0 0 0 3px var(--glow, rgba(42,120,214,.25));
+    border-color: var(--glow-border, var(--series-db));
+  }
+  .node.group-title {
+    background: transparent; border: none; font-size: 11px;
+    font-weight: 700; letter-spacing: .02em; color: var(--text-muted);
+    text-transform: uppercase;
+  }
+  .node.dashed { border-style: dashed; background: var(--box-fill-dim); }
+
+  .particle { position:absolute; width:10px; height:10px; border-radius:50%;
+    transform: translate(-50%,-50%); box-shadow: 0 0 6px currentColor; opacity: 0; }
+
+  .caption-bar {
+    width: 100%; max-width: 1200px; margin-top: 12px;
+    display:flex; gap: 14px; align-items: flex-start;
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 14px; min-height: 54px;
+  }
+  .caption-badge {
+    flex: 0 0 auto; font-size: 11px; font-weight: 700; padding: 3px 9px;
+    border-radius: 999px; white-space: nowrap; margin-top:1px;
+  }
+  .badge-good { background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good); }
+  .badge-warn { background: color-mix(in srgb, var(--warning) 22%, transparent); color: color-mix(in srgb, var(--warning) 70%, black); }
+  .badge-crit { background: color-mix(in srgb, var(--critical) 18%, transparent); color: var(--critical); }
+  .badge-neutral { background: var(--box-fill-dim); color: var(--text-secondary); }
+  .caption-text { font-size: 13px; color: var(--text-primary); }
+  .caption-text b { font-weight: 700; }
+
+  .legend {
+    width: 100%; max-width: 1200px; margin-top: 10px;
+    display: flex; gap: 18px; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary);
+  }
+  .legend .item { display:flex; align-items:center; gap:6px; }
+  .legend .dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+
+  .progress { display:flex; gap:6px; margin-top:10px; }
+  .progress .dot { width:7px; height:7px; border-radius:50%; background: var(--baseline); }
+  .progress .dot.on { background: var(--text-primary); }
+
+  footer { max-width:1200px; width:100%; margin-top:14px; font-size:11.5px; color:var(--text-muted); }
+</style>
+</head>
+<body class="viz-root">
+<header>
+  <h1>InfraGuardian — High-Level System Design</h1>
+  <p class="sub">Where this tool actually sits in a running production environment — not the code, the plumbing: what feeds it, what it sits beside, and what it's allowed to touch on the way out.</p>
+  <div class="toolbar">
+    <button class="ctrl" id="prevBtn" aria-label="Previous step" title="Previous step">◀ Back</button>
+    <button class="ctrl" id="playBtn" aria-pressed="true">⏸ Pause</button>
+    <button class="ctrl" id="nextBtn" aria-label="Next step" title="Next step">Forward ▶</button>
+    <button class="ctrl" id="restartBtn" aria-label="Restart" title="Restart from the beginning">⟲ Restart</button>
+    <button class="ctrl" id="themeBtn">🌓 Toggle theme</button>
+  </div>
+</header>
+
+<div class="stage" id="stage" role="img" aria-label="Animated diagram of InfraGuardian deployed alongside production infrastructure, existing observability tooling, and on-call systems.">
+  <svg class="links" viewBox="0 0 1500 860" preserveAspectRatio="none" aria-hidden="true">
+    <!-- `d` on every path below is computed at runtime from each node's actual rendered
+         bounding box (see buildPaths() in the script) so endpoints always sit exactly on a
+         box edge, instead of hand-guessed coordinates that drift from the real layout. -->
+    <g stroke="var(--grid)" stroke-width="2" fill="none">
+      <path id="path-db-ig" />
+      <path id="path-cpu-ig" />
+      <path id="path-gpu-ig" />
+      <path id="path-infra-obs" />
+      <path id="path-ig-auto" />
+      <path id="path-auto-back" />
+      <path id="path-ig-rec" />
+      <path id="path-ig-esc" />
+      <path id="path-ig-store" />
+      <path id="path-rec-store" />
+      <path id="path-esc-store" />
+      <path id="path-auto-store" />
+    </g>
+  </svg>
+
+  <!-- Column A: Production infrastructure -->
+  <div class="node group-title" style="left:11.3%; top:5%;">Production infrastructure</div>
+  <div class="node" id="n-db"  style="left:11.3%; top:16%; width:140px; border-color:var(--series-db);">
+    <span class="t">DB cluster</span><span class="s">primary + replicas</span>
+  </div>
+  <div class="node" id="n-cpu" style="left:11.3%; top:30%; width:140px; border-color:var(--series-cpu);">
+    <span class="t">Compute hosts</span><span class="s">CPU / memory</span>
+  </div>
+  <div class="node" id="n-gpu" style="left:11.3%; top:44%; width:140px; border-color:var(--series-gpu);">
+    <span class="t">GPU fleet</span><span class="s">training / inference</span>
+  </div>
+
+  <!-- Existing observability (coexists, de-emphasized) -->
+  <div class="node dashed" id="n-obs" style="left:28%; top:14%; width:170px;">
+    <span class="t">Existing observability</span><span class="s">Datadog / Grafana / Prometheus — stays in place, not replaced</span>
+  </div>
+
+  <!-- InfraGuardian core -->
+  <div class="node group-title" style="left:62.5%; top:19%;">InfraGuardian</div>
+  <div class="node" id="n-ig" style="left:62.5%; top:30%; width:230px; padding:14px 16px;">
+    <span class="t">InfraGuardian</span>
+    <span class="s">Deterministic detection + LLM specialists + safety-gated routing</span>
+  </div>
+
+  <!-- Decision destinations -->
+  <div class="node" id="n-auto" style="left:76.7%; top:17%; width:190px;">
+    <span class="t">Auto-remediate</span><span class="s">confidence ≥ 0.8, SAFE, non-critical — gated runbook only</span>
+  </div>
+  <div class="node" id="n-rec" style="left:76.7%; top:38%; width:190px;">
+    <span class="t">Recommend</span><span class="s">on-call dashboard / ticket queue</span>
+  </div>
+  <div class="node" id="n-esc" style="left:76.7%; top:58%; width:190px;">
+    <span class="t">Escalate</span><span class="s">PagerDuty / Slack alert → human</span>
+  </div>
+
+  <!-- audit sink -->
+  <div class="node dashed" id="n-store" style="left:58%; top:76%; width:190px;">
+    <span class="t">Incident store</span><span class="s">every decision + rationale, audited — regardless of path</span>
+  </div>
+
+  <div class="particle" id="p-ambient-db"  style="color: var(--series-db);  background: var(--series-db);"></div>
+  <div class="particle" id="p-ambient-cpu" style="color: var(--series-cpu); background: var(--series-cpu);"></div>
+  <div class="particle" id="p-ambient-gpu" style="color: var(--series-gpu); background: var(--series-gpu);"></div>
+  <div class="particle" id="p-main" ></div>
+  <div class="particle" id="p-audit"></div>
+</div>
+
+<div class="caption-bar">
+  <span class="caption-badge badge-neutral" id="badge">Scenario</span>
+  <span class="caption-text" id="caption">Loading…</span>
+</div>
+<div class="progress" id="progress"></div>
+
+<div class="legend">
+  <span class="item"><span class="dot" style="background:var(--series-db)"></span>DB domain</span>
+  <span class="item"><span class="dot" style="background:var(--series-cpu)"></span>CPU/Mem domain</span>
+  <span class="item"><span class="dot" style="background:var(--series-gpu)"></span>GPU domain</span>
+  <span class="item"><span class="dot" style="background:var(--good)"></span>Auto-remediate</span>
+  <span class="item"><span class="dot" style="background:var(--warning)"></span>Recommend</span>
+  <span class="item"><span class="dot" style="background:var(--critical)"></span>Escalate</span>
+</div>
+
+<footer>
+  InfraGuardian is deployed as a sidecar decision service, not a monitoring replacement: it reads the same telemetry your existing stack already collects, and its only write access to production is through a fixed, pre-approved runbook allowlist — never free-form action.
+</footer>
+
+<script>
+(function(){
+  const root = document.documentElement;
+  const themeBtn = document.getElementById('themeBtn');
+  themeBtn.addEventListener('click', () => {
+    const cur = root.getAttribute('data-theme');
+    root.setAttribute('data-theme', cur === 'dark' ? 'light' : 'dark');
+  });
+
+  const stage = document.getElementById('stage');
+  const caption = document.getElementById('caption');
+  const badge = document.getElementById('badge');
+  const progressEl = document.getElementById('progress');
+  const playBtn = document.getElementById('playBtn');
+  const prevBtn = document.getElementById('prevBtn');
+  const nextBtn = document.getElementById('nextBtn');
+  const restartBtn = document.getElementById('restartBtn');
+
+  const nodes = {};
+  ['n-db','n-cpu','n-gpu','n-obs','n-ig','n-auto','n-rec','n-esc','n-store'].forEach(id => {
+    nodes[id] = document.getElementById(id);
+  });
+
+  const paths = {};
+  ['path-db-ig','path-cpu-ig','path-gpu-ig','path-infra-obs','path-ig-auto','path-auto-back',
+   'path-ig-rec','path-ig-esc','path-ig-store','path-rec-store','path-esc-store','path-auto-store'
+  ].forEach(id => { paths[id] = document.getElementById(id); });
+
+  const DESIGN_W = 1500, DESIGN_H = 860;
+  function placeAt(el, x, y) {
+    el.style.left = (x / DESIGN_W * 100) + '%';
+    el.style.top  = (y / DESIGN_H * 100) + '%';
+  }
+  function pointAtT(pathEl, t) {
+    const len = pathEl.getTotalLength();
+    return pathEl.getPointAtLength(Math.max(0, Math.min(1, t)) * len);
+  }
+
+  // Every connector's endpoint is derived from the node's ACTUAL rendered box (not hand-guessed
+  // viewBox coordinates), so lines always terminate exactly on a box edge regardless of how
+  // text wrapping or viewport width changes a node's real size.
+  function nodeEdgePoint(id, side) {
+    const el = nodes[id];
+    const stageRect = stage.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+    const scaleX = stageRect.width / DESIGN_W;
+    const scaleY = stageRect.height / DESIGN_H;
+    const left = (elRect.left - stageRect.left) / scaleX;
+    const top = (elRect.top - stageRect.top) / scaleY;
+    const width = elRect.width / scaleX;
+    const height = elRect.height / scaleY;
+    const cx = left + width / 2, cy = top + height / 2;
+    if (side === 'left')   return { x: left, y: cy };
+    if (side === 'right')  return { x: left + width, y: cy };
+    if (side === 'top')    return { x: cx, y: top };
+    if (side === 'bottom') return { x: cx, y: top + height };
+    return { x: cx, y: cy };
+  }
+
+  function bezierD(p1, p2, kind) {
+    if (kind === 'v') {
+      const my = (p1.y + p2.y) / 2;
+      return `M ${p1.x},${p1.y} C ${p1.x},${my} ${p2.x},${my} ${p2.x},${p2.y}`;
+    }
+    const mx = (p1.x + p2.x) / 2;
+    return `M ${p1.x},${p1.y} C ${mx},${p1.y} ${mx},${p2.y} ${p2.x},${p2.y}`;
+  }
+
+  const LINKS = [
+    { id: 'path-db-ig',     from: ['n-db','right'],   to: ['n-ig','left'],   kind: 'h' },
+    { id: 'path-cpu-ig',    from: ['n-cpu','right'],  to: ['n-ig','left'],   kind: 'h' },
+    { id: 'path-gpu-ig',    from: ['n-gpu','right'],  to: ['n-ig','left'],   kind: 'h' },
+    { id: 'path-infra-obs', from: ['n-db','right'],   to: ['n-obs','left'],  kind: 'h' },
+    { id: 'path-ig-auto',   from: ['n-ig','top'],     to: ['n-auto','left'], kind: 'h' },
+    { id: 'path-auto-back', from: ['n-auto','left'],  to: ['n-db','right'],  kind: 'h' },
+    { id: 'path-ig-rec',    from: ['n-ig','right'],   to: ['n-rec','left'],  kind: 'h' },
+    { id: 'path-ig-esc',    from: ['n-ig','bottom'],  to: ['n-esc','left'],  kind: 'h' },
+    { id: 'path-ig-store',  from: ['n-ig','bottom'],  to: ['n-store','top'], kind: 'v' },
+    { id: 'path-rec-store', from: ['n-rec','bottom'], to: ['n-store','top'], kind: 'v' },
+    { id: 'path-esc-store', from: ['n-esc','bottom'], to: ['n-store','top'], kind: 'v' },
+    { id: 'path-auto-store',from: ['n-auto','bottom'],to: ['n-store','top'], kind: 'v' },
+  ];
+  function buildPaths() {
+    LINKS.forEach(link => {
+      const p1 = nodeEdgePoint(link.from[0], link.from[1]);
+      const p2 = nodeEdgePoint(link.to[0], link.to[1]);
+      paths[link.id].setAttribute('d', bezierD(p1, p2, link.kind));
+    });
+  }
+  buildPaths();
+  new ResizeObserver(buildPaths).observe(stage);
+
+  // ambient trickle particles: each domain -> InfraGuardian, continuous, independent of narration
+  const ambient = [
+    { el: document.getElementById('p-ambient-db'),  path: paths['path-db-ig'],  color: 'var(--series-db)',  offset: 0.0 },
+    { el: document.getElementById('p-ambient-cpu'), path: paths['path-cpu-ig'], color: 'var(--series-cpu)', offset: 0.33 },
+    { el: document.getElementById('p-ambient-gpu'), path: paths['path-gpu-ig'], color: 'var(--series-gpu)', offset: 0.66 },
+  ];
+  ambient.forEach(a => { a.el.style.background = a.color; a.el.style.color = a.color; a.el.style.opacity = '0.9'; a.el.style.width='7px'; a.el.style.height='7px'; });
+
+  function clearActive() {
+    Object.values(nodes).forEach(n => n.classList.remove('active'));
+  }
+
+  const mainP = document.getElementById('p-main');
+  const auditP = document.getElementById('p-audit');
+  auditP.style.background = 'var(--text-muted)';
+  auditP.style.opacity = '0';
+
+  function setGlow(el, color) {
+    el.style.setProperty('--glow-border', color);
+    el.style.setProperty('--glow', color + '40');
+  }
+
+  // Scenario definitions: sequence of {path, duration, color, activeNodes, caption, badgeText, badgeClass, auditFrom}
+  const scenarios = [
+    {
+      name: "Healthy domain — short-circuits",
+      steps: [
+        { path: 'path-cpu-ig', dur: 900, color: 'var(--series-cpu)', activate: ['n-cpu','n-ig'],
+          caption: "A compute host sample arrives within normal thresholds. The rule pre-screen clears it instantly — no specialist, no LLM call, no cost.",
+          badge: "HEALTHY", badgeClass: "badge-neutral" }
+      ]
+    },
+    {
+      name: "Safe single-domain fix — auto-remediate",
+      steps: [
+        { path: 'path-db-ig', dur: 800, color: 'var(--series-db)', activate: ['n-db','n-ig'],
+          caption: "DB connection-pool utilization breaches its threshold. The DB specialist is invoked and rules the fix SAFE with high confidence.",
+          badge: "DB · HIGH CONF", badgeClass: "badge-good" },
+        { path: 'path-ig-auto', dur: 700, color: 'var(--series-db)', activate: ['n-ig','n-auto'],
+          caption: "Confidence ≥ 0.8, single domain, SAFE verdict → routed to Auto-remediate using the allowlisted runbook only.",
+          badge: "AUTO-REMEDIATE", badgeClass: "badge-good" },
+        { path: 'path-auto-back', dur: 1100, color: 'var(--series-db)', activate: ['n-auto','n-db'],
+          caption: "The pre-approved runbook recycles the leaked connections directly on the DB cluster — the only write path InfraGuardian has into production.",
+          badge: "ACTION EXECUTED", badgeClass: "badge-good", auditFrom: 'path-auto-store' }
+      ]
+    },
+    {
+      name: "Cross-domain incident — recommend",
+      steps: [
+        { path: 'path-cpu-ig', dur: 900, color: 'var(--series-cpu)', activate: ['n-cpu','n-gpu','n-ig'],
+          caption: "CPU saturation and GPU memory pressure fire together. Both specialists run and synthesis correlates them as a hypothesis, not a proven cause.",
+          badge: "CROSS-DOMAIN", badgeClass: "badge-warn" },
+        { path: 'path-ig-rec', dur: 800, color: 'var(--series-cpu)', activate: ['n-ig','n-rec'],
+          caption: "A single runbook only ever targets one domain — multi-domain incidents always route to Recommend, even at high confidence.",
+          badge: "RECOMMEND", badgeClass: "badge-warn", auditFrom: 'path-rec-store' }
+      ]
+    },
+    {
+      name: "Critical hardware fault — escalate",
+      steps: [
+        { path: 'path-gpu-ig', dur: 900, color: 'var(--series-gpu)', activate: ['n-gpu','n-ig'],
+          caption: "GPU ECC memory errors are detected — a possible hardware fault. Severity is forced to Critical.",
+          badge: "CRITICAL", badgeClass: "badge-crit" },
+        { path: 'path-ig-esc', dur: 800, color: 'var(--series-gpu)', activate: ['n-ig','n-esc'],
+          caption: "Critical-severity incidents never auto-remediate — this is a hard gate. It pages the on-call human directly.",
+          badge: "ESCALATE", badgeClass: "badge-crit", auditFrom: 'path-esc-store' }
+      ]
+    }
+  ];
+
+  // Flatten into one addressable sequence so back/forward/restart can jump to any step directly,
+  // instead of the recursive setTimeout chain (which only ever knew how to go forward).
+  const flatSteps = [];
+  scenarios.forEach((scenario, sIdx) => {
+    scenario.steps.forEach((step, stIdx) => {
+      flatSteps.push(Object.assign({}, step, {
+        scenarioIdx: sIdx,
+        isLastInScenario: stIdx === scenario.steps.length - 1,
+      }));
+    });
+  });
+
+  // progress dots
+  scenarios.forEach((_, i) => {
+    const d = document.createElement('div');
+    d.className = 'dot';
+    d.dataset.i = i;
+    progressEl.appendChild(d);
+  });
+  function setProgress(i) {
+    [...progressEl.children].forEach((d, idx) => d.classList.toggle('on', idx === i));
+  }
+
+  let playing = true;
+  let currentIndex = 0;
+  let gen = 0;
+  let advanceTimer = null;
+
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduceMotion) {
+    playing = false;
+    playBtn.textContent = '▶ Play';
+    playBtn.setAttribute('aria-pressed', 'false');
+  }
+
+  function clearAdvanceTimer() {
+    if (advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
+  }
+
+  // Invalidates any in-flight particle animation (via the `gen` token every frame checks)
+  // and clears a pending auto-advance, so a manual nav click can jump cleanly mid-animation.
+  function cancelInFlight() {
+    gen++;
+    clearAdvanceTimer();
+  }
+
+  function animateParticleAlong(el, pathEl, duration, color, onDone) {
+    const myGen = gen;
+    if (reduceMotion) {
+      const pt = pointAtT(pathEl, 1);
+      placeAt(el, pt.x, pt.y);
+      el.style.opacity = '0';
+      onDone && onDone();
+      return;
+    }
+    el.style.background = color;
+    el.style.color = color;
+    el.style.opacity = '1';
+    const start = performance.now();
+    function frame(now) {
+      if (myGen !== gen) return; // cancelled by a nav action
+      const t = Math.min(1, (now - start) / duration);
+      const pt = pointAtT(pathEl, t);
+      placeAt(el, pt.x, pt.y);
+      if (t < 1) {
+        requestAnimationFrame(frame);
+      } else {
+        el.style.opacity = '0';
+        onDone && onDone();
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function animateAmbient() {
+    const AMBIENT_PERIOD = 2200;
+    function frame(now) {
+      ambient.forEach(a => {
+        const t = ((now / AMBIENT_PERIOD) + a.offset) % 1;
+        const pt = pointAtT(a.path, t);
+        placeAt(a.el, pt.x, pt.y);
+      });
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  }
+  animateAmbient();
+
+  function nextIndex(i) { return (i + 1) % flatSteps.length; }
+  function prevIndex(i) { return (i - 1 + flatSteps.length) % flatSteps.length; }
+
+  function scheduleNext(step) {
+    clearAdvanceTimer();
+    if (!playing) return;
+    const gap = step.isLastInScenario ? 1600 : 400;
+    advanceTimer = setTimeout(() => goTo(nextIndex(currentIndex)), gap);
+  }
+
+  // Renders step `i` and animates its particle travel. Called both by autoplay and by manual
+  // back/forward/restart — the two differ only in whether `scheduleNext` goes on to chain.
+  function goTo(i) {
+    cancelInFlight();
+    currentIndex = ((i % flatSteps.length) + flatSteps.length) % flatSteps.length;
+    const step = flatSteps[currentIndex];
+    clearActive();
+    step.activate.forEach(id => {
+      nodes[id].classList.add('active');
+      setGlow(nodes[id], step.color);
+    });
+    badge.textContent = step.badge;
+    badge.className = 'caption-badge ' + step.badgeClass;
+    caption.innerHTML = step.caption;
+    setProgress(step.scenarioIdx);
+
+    animateParticleAlong(mainP, paths[step.path], step.dur, step.color, () => {
+      if (step.auditFrom) {
+        animateParticleAlong(auditP, paths[step.auditFrom], 900, 'var(--text-muted)', () => scheduleNext(step));
+      } else {
+        scheduleNext(step);
+      }
+    });
+  }
+
+  playBtn.addEventListener('click', () => {
+    playing = !playing;
+    playBtn.textContent = playing ? '⏸ Pause' : '▶ Play';
+    playBtn.setAttribute('aria-pressed', String(playing));
+    if (playing) {
+      scheduleNext(flatSteps[currentIndex]);
+    } else {
+      clearAdvanceTimer();
+    }
+  });
+  prevBtn.addEventListener('click', () => goTo(prevIndex(currentIndex)));
+  nextBtn.addEventListener('click', () => goTo(nextIndex(currentIndex)));
+  restartBtn.addEventListener('click', () => goTo(0));
+
+  goTo(0);
+})();
+</script>
+</body>
+</html>

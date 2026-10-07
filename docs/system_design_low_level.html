@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>InfraGuardian — Low-Level System Design</title>
+<style>
+  :root { color-scheme: light; }
+  .viz-root {
+    --surface-1:      #fcfcfb;
+    --page-plane:     #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --grid:           #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --series-db:      #2a78d6;
+    --series-cpu:     #eb6834;
+    --series-gpu:     #1baf7a;
+    --good:           #0ca30c;
+    --warning:        #fab219;
+    --critical:       #d03b3b;
+    --box-fill:       #ffffff;
+    --box-fill-dim:   #f3f2ef;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --page-plane:     #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --grid:           #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --series-db:      #3987e5;
+      --series-cpu:     #d95926;
+      --series-gpu:     #199e70;
+      --good:           #0ca30c;
+      --warning:        #fab219;
+      --critical:       #e66767;
+      --box-fill:       #232322;
+      --box-fill-dim:   #1f1f1e;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --page-plane:     #0d0d0d;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --grid:           #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --series-db:      #3987e5;
+    --series-cpu:     #d95926;
+    --series-gpu:     #199e70;
+    --good:           #0ca30c;
+    --warning:        #fab219;
+    --critical:       #e66767;
+    --box-fill:       #232322;
+    --box-fill-dim:   #1f1f1e;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body.viz-root {
+    background: var(--page-plane);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 24px 16px 48px;
+  }
+
+  header { max-width: 1260px; width: 100%; margin-bottom: 10px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 14px; }
+
+  .toolbar { display:flex; gap:8px; align-items:center; margin-bottom: 12px; }
+  button.ctrl {
+    font: inherit; font-size: 12px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--box-fill);
+    color: var(--text-primary); border-radius: 6px; padding: 6px 10px;
+  }
+  button.ctrl:hover { background: var(--box-fill-dim); }
+
+  .stage {
+    position: relative;
+    width: 100%;
+    max-width: 1260px;
+    aspect-ratio: 1600 / 900;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  svg.links { position:absolute; inset:0; width:100%; height:100%; display:block; }
+
+  .node {
+    position: absolute;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    background: var(--box-fill);
+    padding: 6px 9px;
+    font-size: 12px;
+    line-height: 1.22;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    transition: box-shadow .2s, border-color .2s;
+  }
+  .node .t { font-weight: 600; color: var(--text-primary); }
+  .node .s { color: var(--text-secondary); font-size: 10.3px; display:block; margin-top:2px; }
+  .node.active {
+    box-shadow: 0 0 0 3px var(--glow, rgba(42,120,214,.25));
+    border-color: var(--glow-border, var(--series-db));
+  }
+  .node.gate {
+    background: var(--box-fill-dim);
+    border-style: dashed;
+    font-weight: 600;
+  }
+  .node.group-title {
+    background: transparent; border: none; font-size: 10.5px;
+    font-weight: 700; letter-spacing: .02em; color: var(--text-muted);
+    text-transform: uppercase;
+  }
+  .node.fail {
+    border-color: var(--critical);
+  }
+
+  .particle { position:absolute; width:10px; height:10px; border-radius:50%;
+    transform: translate(-50%,-50%); box-shadow: 0 0 6px currentColor; opacity: 0; }
+
+  .caption-bar {
+    width: 100%; max-width: 1260px; margin-top: 12px;
+    display:flex; gap: 14px; align-items: flex-start;
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 14px; min-height: 54px;
+  }
+  .caption-badge {
+    flex: 0 0 auto; font-size: 11px; font-weight: 700; padding: 3px 9px;
+    border-radius: 999px; white-space: nowrap; margin-top:1px;
+  }
+  .badge-good { background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good); }
+  .badge-warn { background: color-mix(in srgb, var(--warning) 22%, transparent); color: color-mix(in srgb, var(--warning) 70%, black); }
+  .badge-crit { background: color-mix(in srgb, var(--critical) 18%, transparent); color: var(--critical); }
+  .badge-neutral { background: var(--box-fill-dim); color: var(--text-secondary); }
+  .caption-text { font-size: 13px; color: var(--text-primary); }
+
+  .legend {
+    width: 100%; max-width: 1260px; margin-top: 10px;
+    display: flex; gap: 18px; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary);
+  }
+  .legend .item { display:flex; align-items:center; gap:6px; }
+  .legend .dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+  .legend .dash { width:14px; height:0; border-top:2px dashed var(--text-muted); display:inline-block; }
+
+  .progress { display:flex; gap:6px; margin-top:10px; }
+  .progress .dot { width:7px; height:7px; border-radius:50%; background: var(--baseline); }
+  .progress .dot.on { background: var(--text-primary); }
+
+  footer { max-width:1260px; width:100%; margin-top:14px; font-size:11.5px; color:var(--text-muted); }
+</style>
+</head>
+<body class="viz-root">
+<header>
+  <h1>InfraGuardian — Low-Level System Design</h1>
+  <p class="sub">How data and decisions actually move through one incident, including what happens when something fails — the conceptual pipeline, not function names.</p>
+  <div class="toolbar">
+    <button class="ctrl" id="prevBtn" aria-label="Previous step" title="Previous step">◀ Back</button>
+    <button class="ctrl" id="playBtn" aria-pressed="true">⏸ Pause</button>
+    <button class="ctrl" id="nextBtn" aria-label="Next step" title="Next step">Forward ▶</button>
+    <button class="ctrl" id="restartBtn" aria-label="Restart" title="Restart from the beginning">⟲ Restart</button>
+    <button class="ctrl" id="themeBtn">🌓 Toggle theme</button>
+  </div>
+</header>
+
+<div class="stage" id="stage" role="img" aria-label="Animated diagram of InfraGuardian's internal pipeline: metric sample through rule pre-screen, specialist diagnosis, cross-domain synthesis, confidence calibration, routing gate, and audit log, including fail-closed paths.">
+  <svg class="links" viewBox="0 0 1600 900" preserveAspectRatio="none" aria-hidden="true">
+    <!-- `d` on every path below is computed at runtime from each node's actual rendered
+         bounding box (see buildPaths() in the script) so endpoints always sit exactly on a
+         box edge, instead of hand-guessed coordinates that drift from the real layout. -->
+    <g stroke="var(--grid)" stroke-width="2" fill="none">
+      <path id="p-sample-screen" />
+      <path id="p-screen-healthy" />
+      <path id="p-screen-anom" />
+      <path id="p-spec-synth" />
+      <path id="p-synth-calib" />
+      <path id="p-calib-gate" />
+      <path id="p-gate-auto" />
+      <path id="p-gate-rec" />
+      <path id="p-gate-esc" />
+      <path id="p-healthy-report" />
+      <path id="p-fail-spec" />
+      <path id="p-fail-synth" />
+      <path id="p-fail1-esc" />
+      <path id="p-fail2-esc" />
+      <path id="p-audit-auto" />
+      <path id="p-audit-rec" />
+      <path id="p-audit-esc" />
+    </g>
+  </svg>
+
+  <div class="node group-title" style="left:4.3%; top:46%;">Input</div>
+  <div class="node" id="n-sample" style="left:5.6%; top:51%; width:120px;">
+    <span class="t">Metric sample</span><span class="s">1 per domain</span>
+  </div>
+
+  <div class="node gate" id="n-screen" style="left:20%; top:51%; width:150px;">
+    <span class="t">Rule pre-screen</span><span class="s">deterministic thresholds — no LLM</span>
+  </div>
+
+  <div class="node" id="n-healthy" style="left:30%; top:20%; width:140px;">
+    <span class="t">Healthy</span><span class="s">short-circuits — zero LLM cost</span>
+  </div>
+
+  <div class="node" id="n-specialist" style="left:30%; top:62.2%; width:150px;">
+    <span class="t">Specialist diagnosis</span><span class="s">per-domain LLM, structured output only</span>
+  </div>
+
+  <div class="node" id="n-synth" style="left:45%; top:62.2%; width:160px;">
+    <span class="t">Cross-domain synthesis</span><span class="s">correlates findings, labels hypothesis vs. evidence</span>
+  </div>
+
+  <div class="node" id="n-calib" style="left:57.5%; top:62.2%; width:150px;">
+    <span class="t">Confidence calibration</span><span class="s">blends rule signal + model estimate</span>
+  </div>
+
+  <div class="node gate" id="n-gate" style="left:70%; top:62.2%; width:155px;">
+    <span class="t">Routing gate</span><span class="s">severity + confidence + safety verdict — pure logic</span>
+  </div>
+
+  <div class="node" id="n-auto" style="left:83.8%; top:25.5%; width:170px;">
+    <span class="t">Auto-remediate</span><span class="s">allowlisted runbook executes, idempotency-checked</span>
+  </div>
+  <div class="node" id="n-rec" style="left:85%; top:62.2%; width:170px;">
+    <span class="t">Recommend</span><span class="s">surfaced to human, no action taken</span>
+  </div>
+  <div class="node" id="n-esc" style="left:83.8%; top:88.9%; width:170px;">
+    <span class="t">Escalate</span><span class="s">human paged directly, no action taken</span>
+  </div>
+
+  <div class="node fail" id="n-fail1" style="left:30%; top:84.5%; width:170px;">
+    <span class="t">Specialist fails / malformed</span><span class="s">forced CRITICAL → fails closed</span>
+  </div>
+  <div class="node fail" id="n-fail2" style="left:50%; top:84.5%; width:170px;">
+    <span class="t">Synthesis fails / malformed</span><span class="s">forced CRITICAL → fails closed</span>
+  </div>
+
+  <div class="node group-title" style="left:76%; top:92%;">Every path, always</div>
+  <div class="node gate" id="n-audit" style="left:76%; top:94%; width:220px;">
+    <span class="t">Audit log</span><span class="s">decision + rationale + confidence + timestamp persisted</span>
+  </div>
+
+  <div class="particle" id="p-main"></div>
+  <div class="particle" id="p-audit-p"></div>
+</div>
+
+<div class="caption-bar">
+  <span class="caption-badge badge-neutral" id="badge">Step</span>
+  <span class="caption-text" id="caption">Loading…</span>
+</div>
+<div class="progress" id="progress"></div>
+
+<div class="legend">
+  <span class="item"><span class="dot" style="background:var(--series-db)"></span>DB domain</span>
+  <span class="item"><span class="dot" style="background:var(--series-cpu)"></span>CPU/Mem domain</span>
+  <span class="item"><span class="dot" style="background:var(--series-gpu)"></span>GPU domain</span>
+  <span class="item"><span class="dot" style="background:var(--critical)"></span>Fail-closed path</span>
+  <span class="item"><span class="dash"></span>Gate — deterministic, not an LLM call</span>
+</div>
+
+<footer>
+  The only two gates that decide anything are "rule pre-screen" and "routing gate" — both pure logic, no model call. Everything between them is advisory input the gate consumes; it never bypasses the gate, and a failure anywhere upstream collapses to the same fail-closed severity rather than silently defaulting to an action.
+</footer>
+
+<script>
+(function(){
+  const root = document.documentElement;
+  document.getElementById('themeBtn').addEventListener('click', () => {
+    const cur = root.getAttribute('data-theme');
+    root.setAttribute('data-theme', cur === 'dark' ? 'light' : 'dark');
+  });
+
+  const stage = document.getElementById('stage');
+  const caption = document.getElementById('caption');
+  const badge = document.getElementById('badge');
+  const progressEl = document.getElementById('progress');
+  const playBtn = document.getElementById('playBtn');
+  const prevBtn = document.getElementById('prevBtn');
+  const nextBtn = document.getElementById('nextBtn');
+  const restartBtn = document.getElementById('restartBtn');
+
+  const nodeIds = ['n-sample','n-screen','n-healthy','n-specialist','n-synth','n-calib','n-gate',
+    'n-auto','n-rec','n-esc','n-fail1','n-fail2','n-audit'];
+  const nodes = {};
+  nodeIds.forEach(id => nodes[id] = document.getElementById(id));
+
+  const pathIds = ['p-sample-screen','p-screen-healthy','p-screen-anom','p-spec-synth','p-synth-calib',
+    'p-calib-gate','p-gate-auto','p-gate-rec','p-gate-esc','p-healthy-report','p-fail-spec','p-fail-synth',
+    'p-fail1-esc','p-fail2-esc','p-audit-auto','p-audit-rec','p-audit-esc'];
+  const paths = {};
+  pathIds.forEach(id => paths[id] = document.getElementById(id));
+
+  const DESIGN_W = 1600, DESIGN_H = 900;
+  function placeAt(el, x, y) {
+    el.style.left = (x / DESIGN_W * 100) + '%';
+    el.style.top  = (y / DESIGN_H * 100) + '%';
+  }
+  function pointAtT(pathEl, t) {
+    const len = pathEl.getTotalLength();
+    return pathEl.getPointAtLength(Math.max(0, Math.min(1, t)) * len);
+  }
+
+  function clearActive() { Object.values(nodes).forEach(n => n.classList.remove('active')); }
+  function setGlow(el, color) {
+    el.style.setProperty('--glow-border', color);
+    el.style.setProperty('--glow', color + '40');
+  }
+
+  // Every connector's endpoint is derived from the node's ACTUAL rendered box (not hand-guessed
+  // viewBox coordinates), so lines always terminate exactly on a box edge regardless of how
+  // text wrapping or viewport width changes a node's real size.
+  function nodeEdgePoint(id, side) {
+    const el = nodes[id];
+    const stageRect = stage.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+    const scaleX = stageRect.width / DESIGN_W;
+    const scaleY = stageRect.height / DESIGN_H;
+    const left = (elRect.left - stageRect.left) / scaleX;
+    const top = (elRect.top - stageRect.top) / scaleY;
+    const width = elRect.width / scaleX;
+    const height = elRect.height / scaleY;
+    const cx = left + width / 2, cy = top + height / 2;
+    if (side === 'left')   return { x: left, y: cy };
+    if (side === 'right')  return { x: left + width, y: cy };
+    if (side === 'top')    return { x: cx, y: top };
+    if (side === 'bottom') return { x: cx, y: top + height };
+    return { x: cx, y: cy };
+  }
+
+  function bezierD(p1, p2, kind) {
+    if (kind === 'v') {
+      const my = (p1.y + p2.y) / 2;
+      return `M ${p1.x},${p1.y} C ${p1.x},${my} ${p2.x},${my} ${p2.x},${p2.y}`;
+    }
+    const mx = (p1.x + p2.x) / 2;
+    return `M ${p1.x},${p1.y} C ${mx},${p1.y} ${mx},${p2.y} ${p2.x},${p2.y}`;
+  }
+
+  const LINKS = [
+    { id: 'p-sample-screen',  from: ['n-sample','right'],     to: ['n-screen','left'],     kind: 'h' },
+    { id: 'p-screen-healthy', from: ['n-screen','top'],       to: ['n-healthy','bottom'],  kind: 'v' },
+    { id: 'p-screen-anom',    from: ['n-screen','bottom'],    to: ['n-specialist','top'],  kind: 'v' },
+    { id: 'p-spec-synth',     from: ['n-specialist','right'], to: ['n-synth','left'],      kind: 'h' },
+    { id: 'p-synth-calib',    from: ['n-synth','right'],      to: ['n-calib','left'],      kind: 'h' },
+    { id: 'p-calib-gate',     from: ['n-calib','right'],      to: ['n-gate','left'],       kind: 'h' },
+    { id: 'p-gate-auto',      from: ['n-gate','top'],         to: ['n-auto','bottom'],     kind: 'v' },
+    { id: 'p-gate-rec',       from: ['n-gate','right'],       to: ['n-rec','left'],        kind: 'h' },
+    { id: 'p-gate-esc',       from: ['n-gate','bottom'],      to: ['n-esc','top'],         kind: 'v' },
+    { id: 'p-healthy-report', from: ['n-healthy','right'],    to: ['n-gate','top'],        kind: 'v' },
+    { id: 'p-fail-spec',      from: ['n-specialist','bottom'],to: ['n-fail1','top'],       kind: 'v' },
+    { id: 'p-fail-synth',     from: ['n-synth','bottom'],     to: ['n-fail2','top'],       kind: 'v' },
+    { id: 'p-fail1-esc',      from: ['n-fail1','right'],      to: ['n-esc','left'],        kind: 'h' },
+    { id: 'p-fail2-esc',      from: ['n-fail2','right'],      to: ['n-esc','left'],        kind: 'h' },
+    { id: 'p-audit-auto',     from: ['n-auto','bottom'],      to: ['n-audit','top'],       kind: 'v' },
+    { id: 'p-audit-rec',      from: ['n-rec','bottom'],       to: ['n-audit','top'],       kind: 'v' },
+    { id: 'p-audit-esc',      from: ['n-esc','left'],         to: ['n-audit','right'],     kind: 'h' },
+  ];
+  function buildPaths() {
+    LINKS.forEach(link => {
+      const p1 = nodeEdgePoint(link.from[0], link.from[1]);
+      const p2 = nodeEdgePoint(link.to[0], link.to[1]);
+      paths[link.id].setAttribute('d', bezierD(p1, p2, link.kind));
+    });
+  }
+  buildPaths();
+  new ResizeObserver(buildPaths).observe(stage);
+
+  const mainP = document.getElementById('p-main');
+  const auditP = document.getElementById('p-audit-p');
+
+  const scenarios = [
+    {
+      name: "Healthy sample",
+      steps: [
+        { path:'p-sample-screen', dur:700, color:'var(--series-cpu)', activate:['n-sample','n-screen'],
+          caption:"A CPU/Mem sample arrives. The deterministic rule pre-screen checks it against fixed thresholds — pure logic, no model involved.",
+          badge:"PRE-SCREEN", badgeClass:"badge-neutral" },
+        { path:'p-screen-healthy', dur:800, color:'var(--series-cpu)', activate:['n-screen','n-healthy'],
+          caption:"Within normal bounds → classified healthy. The pipeline short-circuits here: no specialist is ever invoked, no LLM cost incurred.",
+          badge:"HEALTHY — SHORT-CIRCUIT", badgeClass:"badge-good" },
+        { path:'p-healthy-report', dur:1000, color:'var(--series-cpu)', activate:['n-healthy','n-gate'],
+          caption:"A healthy-domain report still flows to the same routing output path — recorded, not silently dropped.",
+          badge:"RECORDED", badgeClass:"badge-neutral", auditTo:'p-audit-rec' }
+      ]
+    },
+    {
+      name: "Anomaly → auto-remediate",
+      steps: [
+        { path:'p-sample-screen', dur:700, color:'var(--series-db)', activate:['n-sample','n-screen'],
+          caption:"A DB sample breaches the connection-pool threshold. The pre-screen flags it anomalous.",
+          badge:"ANOMALY DETECTED", badgeClass:"badge-warn" },
+        { path:'p-screen-anom', dur:800, color:'var(--series-db)', activate:['n-screen','n-specialist'],
+          caption:"Only now is the DB specialist invoked — one LLM call, constrained to structured output (root cause, severity, evidence, automation-safety verdict).",
+          badge:"SPECIALIST INVOKED", badgeClass:"badge-warn" },
+        { path:'p-spec-synth', dur:800, color:'var(--series-db)', activate:['n-specialist','n-synth'],
+          caption:"The finding passes into cross-domain synthesis, which states any correlation explicitly as hypothesis or evidence-backed — never bare concatenation.",
+          badge:"SYNTHESIS", badgeClass:"badge-warn" },
+        { path:'p-synth-calib', dur:700, color:'var(--series-db)', activate:['n-synth','n-calib'],
+          caption:"Confidence is calibrated by blending the deterministic rule signal with the model's own estimate — neither is trusted alone.",
+          badge:"CALIBRATED", badgeClass:"badge-warn" },
+        { path:'p-calib-gate', dur:700, color:'var(--series-db)', activate:['n-calib','n-gate'],
+          caption:"The routing gate — pure deterministic logic — checks severity, confidence, and the specialist's SAFE verdict together.",
+          badge:"ROUTING GATE", badgeClass:"badge-warn" },
+        { path:'p-gate-auto', dur:900, color:'var(--series-db)', activate:['n-gate','n-auto'],
+          caption:"Confidence ≥ 0.8, single domain, SAFE, non-critical — all three, every time. The gated allowlisted runbook executes, checked for idempotency first.",
+          badge:"AUTO-REMEDIATE", badgeClass:"badge-good", auditTo:'p-audit-auto' }
+      ]
+    },
+    {
+      name: "Specialist call fails → fail-closed",
+      steps: [
+        { path:'p-sample-screen', dur:700, color:'var(--series-gpu)', activate:['n-sample','n-screen'],
+          caption:"A GPU sample breaches threshold — flagged anomalous.",
+          badge:"ANOMALY DETECTED", badgeClass:"badge-warn" },
+        { path:'p-screen-anom', dur:800, color:'var(--series-gpu)', activate:['n-screen','n-specialist'],
+          caption:"The GPU specialist is invoked — but the call raises an error, or returns output that fails schema validation.",
+          badge:"CALL FAILS", badgeClass:"badge-crit" },
+        { path:'p-fail-spec', dur:900, color:'var(--critical)', activate:['n-specialist','n-fail1'],
+          caption:"This never defaults to a safe-looking guess. Severity is forced to CRITICAL — a hard-coded fail-closed sentinel finding — guaranteeing escalation regardless of what the data looked like.",
+          badge:"FAIL-CLOSED", badgeClass:"badge-crit" },
+        { path:'p-fail1-esc', dur:1000, color:'var(--critical)', activate:['n-fail1','n-esc'],
+          caption:"The forced-CRITICAL finding still passes through synthesis and the same routing gate — it just can never clear the auto-remediate bar. Result: escalate.",
+          badge:"ESCALATE", badgeClass:"badge-crit", auditTo:'p-audit-esc' }
+      ]
+    },
+    {
+      name: "Cross-domain, low confidence → recommend",
+      steps: [
+        { path:'p-sample-screen', dur:700, color:'var(--series-cpu)', activate:['n-sample','n-screen'],
+          caption:"Two domains breach thresholds concurrently — both get flagged.",
+          badge:"MULTI-DOMAIN", badgeClass:"badge-warn" },
+        { path:'p-screen-anom', dur:800, color:'var(--series-cpu)', activate:['n-screen','n-specialist'],
+          caption:"Each anomalous domain's specialist runs independently and concurrently.",
+          badge:"PARALLEL DIAGNOSIS", badgeClass:"badge-warn" },
+        { path:'p-spec-synth', dur:800, color:'var(--series-cpu)', activate:['n-specialist','n-synth'],
+          caption:"Synthesis correlates both findings — but co-occurrence in time is labeled a hypothesis, not a proven cause, unless a direct measured link exists.",
+          badge:"CORRELATION = HYPOTHESIS", badgeClass:"badge-warn" },
+        { path:'p-synth-calib', dur:700, color:'var(--series-cpu)', activate:['n-synth','n-calib'],
+          caption:"Multi-domain findings calibrate to a lower confidence band than single-domain ones by design.",
+          badge:"CALIBRATED LOWER", badgeClass:"badge-warn" },
+        { path:'p-calib-gate', dur:700, color:'var(--series-cpu)', activate:['n-calib','n-gate'],
+          caption:"The gate sees two affected domains. A single runbook only ever targets one domain — so this can never auto-remediate, regardless of confidence.",
+          badge:"ROUTING GATE", badgeClass:"badge-warn" },
+        { path:'p-gate-rec', dur:900, color:'var(--series-cpu)', activate:['n-gate','n-rec'],
+          caption:"Routed to Recommend: surfaced to a human with full rationale attached, no automated action taken.",
+          badge:"RECOMMEND", badgeClass:"badge-warn", auditTo:'p-audit-rec' }
+      ]
+    }
+  ];
+
+  // Flatten into one addressable sequence so back/forward/restart can jump to any step directly,
+  // instead of the recursive setTimeout chain (which only ever knew how to go forward).
+  const flatSteps = [];
+  scenarios.forEach((scenario, sIdx) => {
+    scenario.steps.forEach((step, stIdx) => {
+      flatSteps.push(Object.assign({}, step, {
+        scenarioIdx: sIdx,
+        isLastInScenario: stIdx === scenario.steps.length - 1,
+      }));
+    });
+  });
+
+  scenarios.forEach((_, i) => {
+    const d = document.createElement('div');
+    d.className = 'dot';
+    progressEl.appendChild(d);
+  });
+  function setProgress(i) {
+    [...progressEl.children].forEach((d, idx) => d.classList.toggle('on', idx === i));
+  }
+
+  let playing = true;
+  let currentIndex = 0;
+  let gen = 0;
+  let advanceTimer = null;
+
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduceMotion) {
+    playing = false;
+    playBtn.textContent = '▶ Play';
+    playBtn.setAttribute('aria-pressed', 'false');
+  }
+
+  function clearAdvanceTimer() {
+    if (advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
+  }
+
+  // Invalidates any in-flight particle animation (via the `gen` token every frame checks)
+  // and clears a pending auto-advance, so a manual nav click can jump cleanly mid-animation.
+  function cancelInFlight() {
+    gen++;
+    clearAdvanceTimer();
+  }
+
+  function animateParticleAlong(el, pathEl, duration, color, onDone) {
+    const myGen = gen;
+    if (reduceMotion) {
+      const pt = pointAtT(pathEl, 1);
+      placeAt(el, pt.x, pt.y);
+      el.style.opacity = '0';
+      onDone && onDone();
+      return;
+    }
+    el.style.background = color;
+    el.style.color = color;
+    el.style.opacity = '1';
+    const start = performance.now();
+    function frame(now) {
+      if (myGen !== gen) return; // cancelled by a nav action
+      const t = Math.min(1, (now - start) / duration);
+      const pt = pointAtT(pathEl, t);
+      placeAt(el, pt.x, pt.y);
+      if (t < 1) {
+        requestAnimationFrame(frame);
+      } else {
+        el.style.opacity = '0';
+        onDone && onDone();
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function nextIndex(i) { return (i + 1) % flatSteps.length; }
+  function prevIndex(i) { return (i - 1 + flatSteps.length) % flatSteps.length; }
+
+  function scheduleNext(step) {
+    clearAdvanceTimer();
+    if (!playing) return;
+    const gap = step.isLastInScenario ? 1800 : 400;
+    advanceTimer = setTimeout(() => goTo(nextIndex(currentIndex)), gap);
+  }
+
+  // Renders step `i` and animates its particle travel. Called both by autoplay and by manual
+  // back/forward/restart — the two differ only in whether `scheduleNext` goes on to chain.
+  function goTo(i) {
+    cancelInFlight();
+    currentIndex = ((i % flatSteps.length) + flatSteps.length) % flatSteps.length;
+    const step = flatSteps[currentIndex];
+    clearActive();
+    step.activate.forEach(id => {
+      nodes[id].classList.add('active');
+      setGlow(nodes[id], step.color);
+    });
+    badge.textContent = step.badge;
+    badge.className = 'caption-badge ' + step.badgeClass;
+    caption.textContent = step.caption;
+    setProgress(step.scenarioIdx);
+
+    animateParticleAlong(mainP, paths[step.path], step.dur, step.color, () => {
+      if (step.auditTo) {
+        nodes['n-audit'].classList.add('active');
+        setGlow(nodes['n-audit'], 'var(--text-muted)');
+        animateParticleAlong(auditP, paths[step.auditTo], 900, 'var(--text-muted)', () => scheduleNext(step));
+      } else {
+        scheduleNext(step);
+      }
+    });
+  }
+
+  playBtn.addEventListener('click', () => {
+    playing = !playing;
+    playBtn.textContent = playing ? '⏸ Pause' : '▶ Play';
+    playBtn.setAttribute('aria-pressed', String(playing));
+    if (playing) {
+      scheduleNext(flatSteps[currentIndex]);
+    } else {
+      clearAdvanceTimer();
+    }
+  });
+  prevBtn.addEventListener('click', () => goTo(prevIndex(currentIndex)));
+  nextBtn.addEventListener('click', () => goTo(nextIndex(currentIndex)));
+  restartBtn.addEventListener('click', () => goTo(0));
+
+  goTo(0);
+})();
+</script>
+</body>
+</html>
