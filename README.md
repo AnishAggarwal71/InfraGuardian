@@ -60,6 +60,13 @@ Metric Sources → Ingestion → Rule Pre-Screen → Specialist Agents (parallel
   reports, and a separate FR-16 audit log of every executed action, idempotency-guarded by a
   `UNIQUE(incident_id, runbook_id)` constraint.
 
+**Diagrams:** animated high-level and low-level system design walkthroughs, plus a narrated
+"learn InfraGuardian" explainer, live under `docs/`:
+[`system_design_high_level.html`](docs/system_design_high_level.html),
+[`system_design_low_level.html`](docs/system_design_low_level.html),
+[`learn_infraguardian.html`](docs/learn_infraguardian.html). Open any of them directly in a
+browser (`open docs/system_design_high_level.html` on macOS) — no server needed.
+
 ## Model-agnostic LLM layer
 
 `tools/llm.py` is the only module allowed to import a provider-specific LangChain package, and
@@ -283,8 +290,10 @@ against the fake model — no network or API key required for CI.
   confidence with every contributing finding `SAFE` — a single runbook only ever targets one
   domain, so auto-executing one domain's fix while leaving a corroborated second domain
   unaddressed is a scope mismatch this MVP doesn't attempt to solve.
-- Real-provider numbers (see Evaluation's spot-check subsection) are a small manual sample, not
-  a held-out eval set — the 104-case harness above remains fake-model-only by design.
+- The 104-case harness above is fake-model-only by design (deterministic, free, no API key
+  needed for CI). Real-provider behavior is proven by running `analyze`/`live`/`watch` locally
+  with a real `ANTHROPIC_API_KEY` or `GOOGLE_API_KEY` configured — that's a manual spot check,
+  not a held-out eval set, and no aggregate real-model accuracy numbers are published here.
 - The pricing table backing `cost_per_incident_usd` covers a handful of model strings; an
   unlisted model prices at `$0.00` rather than erroring (see Observability above).
 - The real collector (`PsutilCollector`) covers CPU/mem only — DB and GPU domains remain
@@ -314,6 +323,7 @@ infra-guardian/
 ├── cli/main.py               # CLI: list, analyze, live, watch, metrics
 ├── storage/incident_store.py # SQLite incident + remediation-action audit trail
 ├── evaluation/               # fixtures/ + evaluator.py + reports/latest.json
+├── docs/                      # animated system design + learn-InfraGuardian HTML walkthroughs
 ├── tests/
 ├── scripts/demo_incident.py  # manual verification script (not the FR-17 CLI — see DECISIONS.md)
 ├── Dockerfile / docker-compose.yml / .dockerignore / .env.example

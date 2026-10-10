@@ -609,3 +609,44 @@ path works, not just the happy path. Docker build/Render deploy/visibility flip 
 handed to the user — this sandbox has no Docker daemon and the agent cannot click through
 Render's or GitHub's own account-gated UI.
 
+## 2026-10-11 — Pre-Windows-testing cleanup pass
+
+**Decision:** before the user ran the first real Windows test of this repo, fixed three small
+but genuine credibility/correctness gaps found during a diagnostic sweep, rather than leaving
+them for the user to trip over mid-test.
+
+1. **Regenerated `requirements.txt`** via `uv export --no-hashes --no-dev --frozen
+   -o requirements.txt`. *Why:* `psutil` had been added to `pyproject.toml`/`uv.lock` in an
+   earlier round but `requirements.txt` was never regenerated, so anyone installing from
+   `requirements.txt` alone (rather than `uv sync`) would hit a missing-dependency error at
+   runtime the first time `PsutilCollector` ran. Used `--frozen` so this didn't require resolving
+   `plyer` (not yet in `uv.lock`) over the network. `plyer` itself is still absent from
+   `requirements.txt` until the user runs `uv lock` on Windows — expected, not a bug.
+2. **Fixed a dangling README reference.** The Limitations section pointed to "Evaluation's
+   spot-check subsection," which doesn't exist anywhere in the README — no real-model spot-check
+   numbers were ever actually written up in this repo despite the pointer. *Why:* a public,
+   recruiter-facing README citing a nonexistent section is a worse look than not mentioning it;
+   rewrote the bullet to describe the real, honest state (real-provider behavior is proven by
+   running the CLI locally with a real key, not by a published numeric sample) instead of either
+   fabricating numbers or leaving a broken cross-reference.
+3. **Linked the existing `docs/*.html` diagrams from the README.** Three diagram files
+   (`system_design_high_level.html`, `system_design_low_level.html`, `learn_infraguardian.html`)
+   were already committed (commit `07ae982`) but never linked or mentioned anywhere in the
+   README or Repository layout section — effectively invisible to anyone browsing the now-public
+   repo. Added a short "Diagrams" callout under Architecture and a `docs/` line in Repository
+   layout.
+
+**Alternatives considered:**
+- Enabling GitHub Pages to host the diagrams as a live page instead of linking the raw HTML
+  files — deferred; it's a nice-to-have, not a correctness fix, and the user is about to do
+  real testing, not repo-presentation work. Can revisit after Windows testing.
+- Writing an actual real-model spot-check subsection with fabricated or placeholder numbers —
+  rejected; the project's own standard (PRD §17, "run the harness and report what it actually
+  says") rules out hand-waved numbers, and no real-model aggregate data currently exists in this
+  repo to report honestly.
+
+**Verification:** `uv run --no-sync pytest -q` → 94 passed, unchanged. `git diff --stat
+requirements.txt` showed only the expected 3-line addition (`psutil==7.2.2` + its `# via`
+comment). Manual read-through of the edited Limitations/Architecture/Repository-layout sections
+to confirm no other dangling references remain nearby.
+
