@@ -15,5 +15,10 @@ RUN uv sync --no-dev
 
 EXPOSE 8000
 
-# No reload here — `--reload` is a dev-server convenience, not something a container should run.
-CMD ["uv", "run", "uvicorn", "api.server:app", "--host", "0.0.0.0", "--port", "8000"]
+# Shell form (not exec-form) so `${PORT:-8000}` actually expands — platforms like Render inject
+# their own $PORT at runtime and expect the container to bind to it; exec-form CMD doesn't do
+# shell variable expansion, so `--port 8000` would be taken as a hardcoded literal. Falls back
+# to 8000 when $PORT is unset (local `docker run`/`docker compose up`), so local usage is
+# unchanged. No `--reload` here — that's a dev-server convenience, not something a container
+# should run.
+CMD ["sh", "-c", "uv run uvicorn api.server:app --host 0.0.0.0 --port ${PORT:-8000}"]

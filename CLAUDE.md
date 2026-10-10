@@ -149,3 +149,13 @@ one of these in a way that's hard to reverse later.
   if dependencies change, regenerate with `uv lock` on a machine where this pin is honored and
   confirm `uv.lock` has no internal-mirror URLs before committing it (see `DECISIONS.md`,
   2026-10-09).
+- Optional/notification-style dependencies (e.g. `plyer` for desktop toasts in `cli.main watch`)
+  follow the same lazy-import convention as `tools/llm.py`'s provider SDKs: import inside the
+  function that needs it, not at module top-level, so the module stays importable (and the test
+  suite stays green) before `uv sync` has pulled that dependency in. Wrap the call in
+  `try/except` and degrade to a logged warning — never let an optional convenience crash a loop
+  that's otherwise working correctly (see `DECISIONS.md`, 2026-10-11).
+- A long-running polling loop (`cli.main watch`) must not persist every tick unconditionally —
+  only persist when the tick is actually anomalous. `run_incident`'s default-persist behavior is
+  fine for one-shot CLI commands (`analyze`/`live`) but floods the `incidents` table if called
+  on every tick of an indefinite loop (see `DECISIONS.md`, 2026-10-11).

@@ -530,3 +530,82 @@ network-reaching registry change as needing an explicit go-ahead rather than inf
 a general request to drop the private-mirror lock entries. The `pyproject.toml` pin is in place either way;
 only the lockfile regeneration itself is pending.
 
+---
+
+## 2026-10-11 — Continuous watch mode, public live deploy, public repo
+
+**Decision:** Added `cli.main watch` (a real continuous-monitoring loop, not one-shot), a Render
+Blueprint (`render.yaml`) for a free public deployment, and made the GitHub repo public with a
+LICENSE and README restructured to lead with a working link. All three confirmed explicitly by
+the user via `AskUserQuestion` as the push to close the gap between "project exists" and "project
+impresses an FDE recruiter."
+
+**Why:** `analyze`/`live` are one-shot — they don't demonstrate the "incident-response system"
+pitch actually watching anything over time. Everything else required a clone + local run, which
+is a dead link for a resume. The repo itself (private, no description/topics/license) undersold
+the work independent of the code.
+
+**Sub-decisions:**
+
+1. **Edge-triggered alerting, not per-tick.** `cli/main.py::_should_alert` fires on the
+   healthy→anomalous transition and again only on severity escalation while still anomalous —
+   never on an unchanged ongoing anomaly or on recovery. *Why:* a tool that pages on every tick
+   of a flapping metric trains people to ignore it; the same reasoning a real on-call rotation
+   needs. Needed an explicit `_SEVERITY_ORDER` rank dict since `StrEnum` members don't compare
+   by severity (mirrors `tools/llm.py::_SEVERITY_RANK`).
+2. **Persist only on anomalous ticks, not every tick.** `watch` always calls `run_incident(...,
+   persist=False)`, then persists explicitly only when `report.affected_domains` is non-empty.
+   *Why:* confirmed by reading `orchestrator.py`/`storage/incident_store.py` that `persist=True`
+   unconditionally upserts a row — fine for `analyze`/`live`'s one-shot use, but a long-running
+   watcher polling every 15s would flood `incidents` with thousands of identical healthy rows.
+   This is a deliberate behavioral difference from `analyze`/`live`'s default-persist stance, not
+   an oversight.
+3. **`plyer` for desktop notifications, lazily imported.** `_notify()` imports `plyer` inside the
+   function body (same convention as `tools/llm.py`'s provider SDKs) and wraps the call in
+   `try/except`, degrading to a one-line stderr warning on failure rather than crashing the loop
+   — the alert itself is already printed to stdout regardless, so a notification backend failure
+   is a convenience loss, not a correctness problem. This also means the existing test suite
+   (`uv run pytest -q`) stays green on a machine that hasn't run `uv sync` since `plyer` was
+   added to `pyproject.toml` — verified in this environment, which has no network access to
+   actually install it.
+4. **Dockerfile `CMD` switched from exec-form to shell-form** (`sh -c "... --port
+   ${PORT:-8000}"`). *Why:* Render injects its own `$PORT` at runtime and expects the container
+   to bind to it; exec-form `CMD ["...", "--port", "8000"]` doesn't do shell variable expansion,
+   so the literal `"8000"` would silently fail to route traffic on Render while working fine
+   locally — the kind of bug that only surfaces after a deploy, not in local testing. Falls back
+   to 8000 when `$PORT` is unset, so local `docker run`/`docker compose up` is unaffected.
+5. **Public deploy runs the offline fake model only — no `ANTHROPIC_API_KEY` in `render.yaml`.**
+   *Why:* an unauthenticated public `POST /analyze` with a real paid key wired in is unbounded
+   cost/abuse exposure; this project has no auth or rate limiting (already a documented
+   Limitation). Real-model behavior stays demonstrated locally with the user's own key — this is
+   a safety/cost decision, not a capability limit, and the README's new Live demo section says
+   so explicitly rather than leaving it to be discovered.
+6. **Pre-public-visibility secrets scan, run before flipping GitHub visibility.** Checked
+   `git log --all --diff-filter=A -- .env` (empty), grepped full history for `sk-ant-`/
+   `AKIA...`/private-key patterns (zero matches), and confirmed `.claude/`, `*.db`, `.DS_Store`,
+   `.pytest_cache/` were never tracked. *Why:* flipping a repo to public is effectively
+   irreversible for anything already exposed (forks, caches, scrapers) — this is checked and
+   reported before the `gh repo edit --visibility public` call, not after.
+7. **MIT license, not re-confirmed with the user.** Standard, reversible default for a public
+   portfolio project; treated as low-stakes enough not to need its own sign-off, unlike the
+   visibility flip itself (which was explicitly confirmed).
+
+**Alternatives considered:**
+- Per-tick alerting (simplest to implement) — rejected per sub-decision 1, alert fatigue.
+- Always persisting every tick in `watch`, same as `analyze`/`live` — rejected per sub-decision
+  2, unbounded table growth for a feature meant to run indefinitely.
+- Deploying with the real Anthropic key so the public demo shows real reasoning quality —
+  rejected per sub-decision 5; the cost/abuse exposure of an unauthenticated public endpoint
+  outweighs the demo value, and the real-model spot-check already exists locally for that
+  purpose (see the 2026-10-xx cost-tracking entry above).
+
+**Verification:** `uv run pytest -q` (offline, `--no-sync` since this environment can't reach
+PyPI for the new `plyer` dependency) → 94 passed (88 prior + 6 new in `tests/test_watch.py`).
+Manually ran `uv run python -m cli.main watch --max-ticks 3 --interval 1` against this machine's
+real metrics: correctly detected an actual swap-pressure anomaly, alerted once, suppressed the
+repeat at unchanged severity, persisted exactly one row to `infraguardian.db`, and the
+notification fallback warning fired cleanly in the absence of `plyer` — confirming the fail-soft
+path works, not just the happy path. Docker build/Render deploy/visibility flip verification
+handed to the user — this sandbox has no Docker daemon and the agent cannot click through
+Render's or GitHub's own account-gated UI.
+

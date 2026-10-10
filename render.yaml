@@ -1,0 +1,17 @@
+# Render Blueprint (https://render.com/docs/blueprint-spec) for a free-tier public demo
+# deployment of InfraGuardian. Deliberately sets no ANTHROPIC_API_KEY / GOOGLE_API_KEY: an
+# unauthenticated, publicly-reachable POST /analyze with a real paid model key wired in is
+# unbounded cost/abuse exposure (there's no auth or rate limiting in this MVP — see README
+# Limitations). INFRAGUARDIAN_MODEL is left unset so this deployment always runs the offline
+# FakeInfraGuardianModel; real-model behavior stays demonstrated locally, with the user's own
+# key (see README's Model-agnostic LLM layer / Evaluation sections).
+services:
+  - type: web
+    name: infraguardian
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: INFRAGUARDIAN_MODEL
+        value: ""

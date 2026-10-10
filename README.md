@@ -3,13 +3,32 @@
 An agentic infrastructure incident-response system: deterministic anomaly detection across
 DB / CPU-mem / GPU domains, specialist LLM agents invoked only on flagged anomalies, a
 LangGraph orchestrator that correlates cross-domain findings into a unified incident report,
-and safety-gated routing to auto-remediation, human recommendation, or escalation.
+and safety-gated routing to auto-remediation, human recommendation, or escalation. It also
+watches a live host continuously (`cli.main watch`) and alerts the moment something trips a
+threshold or escalates — not just one-shot analysis.
 
 Built as a portfolio/FDE-style project: the pitch is bounded autonomy, evaluation rigor, and
 failure handling — not "look, a LangGraph demo." Source of truth for requirements is
 `InfraGuardian_PRD.docx`; `CLAUDE.md` translates that into the build plan actually followed,
 and `DECISIONS.md` is the full decision log (what we did, why, what we rejected and why) for
 every milestone.
+
+## Live demo
+
+```bash
+curl -s https://infraguardian.onrender.com/health
+curl -s -X POST https://infraguardian.onrender.com/analyze \
+    -H 'content-type: application/json' -d '{"scenarios": ["gpu_ecc_errors"]}'
+```
+
+> Replace with the actual Render URL once deployed — see Deployment below.
+
+This public instance runs the offline `FakeInfraGuardianModel` only, by design: an
+unauthenticated public endpoint with a real paid API key wired in is unbounded cost/abuse
+exposure (there's no auth or rate limiting in this MVP — see Limitations). The architecture
+itself is model-agnostic and has been run against a real Anthropic model locally (see Model-
+agnostic LLM layer and Evaluation below) — the public demo's scope is a deliberate safety
+decision, not a capability limit.
 
 ## Architecture
 
@@ -70,6 +89,37 @@ collector would implement the same Protocol — PRD FR-03's "collector abstracti
 load-bearing" is the reason this swap required zero changes to the rule engine, agents, or
 orchestrator).
 
+## Continuous monitoring
+
+```bash
+uv run python -m cli.main watch --interval 15
+```
+
+Unlike `live` (one sample, one report, exit), `watch` is the actual "agentic infrastructure
+incident-response system" running continuously against a live host: it polls `PsutilCollector`
+every `--interval` seconds, prints a quiet one-line heartbeat while healthy, and surfaces an
+anomaly loudly — a full bannered incident report plus a desktop toast notification (`plyer`,
+cross-platform including Windows) — the moment one is detected.
+
+- **Edge-triggered alerting, not per-tick spam.** It alerts once on the healthy→anomalous
+  transition and again only if severity escalates while still anomalous — never on an unchanged
+  ongoing anomaly or on recovery. A tool that pages on every tick of a flapping metric trains
+  people to ignore it, which defeats the point; this is the same reasoning a real on-call system
+  needs. Logic lives in `cli/main.py::_should_alert`, unit-tested in isolation in
+  `tests/test_watch.py`.
+- **Persistence only on anomalies.** `run_incident` is called with `persist=False` on every
+  tick; an anomalous tick is then persisted explicitly. `analyze`/`live` persist unconditionally
+  (fine for one-shot use), but a long-running watcher doing that would flood the `incidents`
+  table with thousands of identical healthy rows — a deliberate deviation, logged in
+  `DECISIONS.md`.
+- **Desktop notification failures degrade, never crash.** `_notify` lazily imports `plyer`
+  inside the function (same lazy-import convention as `tools/llm.py`'s provider SDKs) and wraps
+  the call in `try/except` — a missing backend prints a one-line stderr warning; the alert
+  itself was already printed to stdout regardless (fail-soft, per PRD §9's "tool failures are
+  represented explicitly, never swallowed").
+- **Known limitation:** `watch` covers the CPU/mem domain only, same as `live` — DB/GPU remain
+  simulator-only.
+
 ## Setup
 
 ```bash
@@ -98,6 +148,7 @@ uv run python -m cli.main analyze db_connection_pool_exhaustion    # human-reada
 uv run python -m cli.main analyze gpu_ecc_errors --json            # full IncidentReport JSON
 uv run python -m cli.main analyze db_healthy cpu_mem_healthy --no-persist
 uv run python -m cli.main live                                     # analyze this host's real CPU/mem/swap/load
+uv run python -m cli.main watch --interval 15                      # continuously watch this host, alert on anomalies
 uv run python -m cli.main metrics                                 # self-observability snapshot
 ```
 
@@ -194,7 +245,14 @@ docker compose up --build
 - Out of scope at this MVP stage, same as the rest of the project: no auth in front of the API,
   no TLS termination, no Postgres/multi-replica story, no PagerDuty/Slack integration.
 
-
+**Public demo (Render):** `render.yaml` is a Render Blueprint — connect this GitHub repo on
+Render, it detects the file and deploys the existing `Dockerfile` as a free web service with
+`GET /health` as the health check. The Dockerfile's `CMD` uses shell form
+(`--port ${PORT:-8000}`) specifically so it honors Render's injected `$PORT` while still
+defaulting to 8000 for local `docker run`/`docker compose up` — an exec-form `CMD` with a
+literal port wouldn't expand a shell variable. `render.yaml` deliberately sets no
+`ANTHROPIC_API_KEY` — the public deploy always runs the offline fake model (see Live demo
+above).
 
 ## Tests
 
@@ -202,13 +260,14 @@ docker compose up --build
 uv run pytest -q
 ```
 
-88 passing cases across 14 files, covering metric contracts, the rule engine (every scenario's
+94 passing cases across 15 files, covering metric contracts, the rule engine (every scenario's
 first/last sample classified correctly), the fake model, specialist agents, LangGraph
 fan-out/fan-in and synthesis, confidence calibration, routing (a dedicated table-driven
 safety-invariant checklist — critical-never-auto-remediates and low-confidence-always-escalates
 are explicit test cases, not incidental coverage), remediation runbooks, incident-store
 idempotency, the orchestrator's fail-closed behavior on a raising specialist, real and simulated
-metric collectors, LLM cost pricing, the API, and the evaluation harness itself. All run offline
+metric collectors, the continuous watch loop's edge-triggered alerting and persist-only-on-
+anomaly rule, LLM cost pricing, the API, and the evaluation harness itself. All run offline
 against the fake model — no network or API key required for CI.
 
 ## Limitations
@@ -252,12 +311,14 @@ infra-guardian/
 ├── tools/                   # metrics, thresholds, collectors, llm, confidence, routing,
 │                             #   remediation, scenarios, observability
 ├── api/server.py            # FastAPI: POST /analyze, GET /health, GET /metrics
-├── cli/main.py               # CLI: list, analyze, live, metrics
+├── cli/main.py               # CLI: list, analyze, live, watch, metrics
 ├── storage/incident_store.py # SQLite incident + remediation-action audit trail
 ├── evaluation/               # fixtures/ + evaluator.py + reports/latest.json
 ├── tests/
 ├── scripts/demo_incident.py  # manual verification script (not the FR-17 CLI — see DECISIONS.md)
 ├── Dockerfile / docker-compose.yml / .dockerignore / .env.example
+├── render.yaml                # Render Blueprint for the public demo deploy
+├── LICENSE                    # MIT
 ├── DECISIONS.md               # full build decision log
 ├── MILESTONES.md              # time-boxed milestone tracking
 └── requirements.txt           # generated via `uv export` — uv.lock is the source of truth
