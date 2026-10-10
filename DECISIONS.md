@@ -417,3 +417,116 @@ results, observability, test coverage, limitations (stated plainly: simulated re
 judgment-call thresholds, fake-model RCA quality, the cross-domain-never-auto-remediates MVP
 limitation, no real-provider numbers yet, unimplemented cost tracking), and the simulator→
 production collector migration path.
+
+---
+
+## 2026-10-09 — Closing the "10/10 FDE project" credibility gaps
+
+**Context:** After M5, the user asked directly whether the project could be sold as a 10/10 FDE
+project as-is. Answer was no, for three specific reasons: every eval number is measured only
+against the offline fake model, every metric sample comes from hand-authored fixtures never a
+real collector, and there's no containerized/deployable artifact. The user chose to close
+exactly these three gaps (`AskUserQuestion`: real LLM key — yes, user manages `.env` themselves;
+Docker — write the artifacts, user builds/verifies since this environment has no Docker; real
+collector — psutil, recommended). Explicitly out of scope: real remediation execution, API auth,
+Postgres migration, PagerDuty/Slack integration — those remain documented limitations, not
+addressed here.
+
+**Decision 1 — `PsutilCollector` added as a second `MetricCollector` implementation**, reading
+real CPU/mem/swap/load via `psutil` into a `CPUMemMetrics`, plus a new `cli.main live` subcommand
+that runs one real sample through the full pipeline. *Why psutil over DB/GPU collectors:* lowest
+effort, no external service dependency, and CPU/mem is the domain most reviewers can verify
+themselves on their own machine. *Alternative considered:* a real DB collector (status queries)
+or `pynvml` GPU collector — both deferred; the architectural proof (the `Protocol` swap requires
+zero downstream changes) is fully established by one real implementation, and a reviewer can
+extrapolate the other two from the pattern. Verified live: `cli.main live` surfaced a genuine HIGH
+swap-pressure finding on this machine (`swap_pct=74.0` against a 10.0 threshold), not a
+fixture-shaped number.
+
+**Decision 2 — Real LLM cost tracking via `tools.llm.invoke_structured()` and a thread-local,
+not a changed `diagnose()` return type.** `with_structured_output(..., include_raw=True).invoke()`
+preserves the raw message's `usage_metadata`; `invoke_structured()` prices it against a small
+per-model table and stashes the result in a `threading.local()` for the caller to read
+immediately after via `get_last_cost_usd()`. *Why not `(finding, cost)` as the return type:*
+three agent test files and the orchestrator's pattern-matching rely on `diagnose()` returning a
+bare `SpecialistFinding` (`isinstance` checks); changing that for an internal telemetry detail
+would ripple through test contracts for no benefit to callers. Thread-local scratch space,
+read-immediately-after-call, is safe because each specialist node runs its LLM call fully
+synchronously within its own thread before any other code reads the thread-local — the same
+single-threaded-per-node assumption the existing `RECORDER` lock already relies on.
+*Alternative considered and rejected:* a module-level mutable (not thread-local) — unsafe under
+LangGraph's concurrent specialist branches, since two domains' calls could race on the same
+variable.
+
+**Decision 3 — Pricing table is a small hardcoded dict covering a handful of Anthropic model
+strings, not an exhaustive or dynamically-fetched catalog**, and an unlisted model (including the
+fake model) prices at `$0.00` rather than raising. *Why:* get a real number flowing end-to-end
+for the models actually in use rather than build a pricing-API integration for a cost-reporting
+feature that's secondary to the project's core safety/orchestration pitch. Documented as a known
+gap in the README rather than silently correct-by-construction.
+
+**Decision 4 — Docker artifacts (`Dockerfile`, `.dockerignore`, `docker-compose.yml`,
+`.env.example`) written but not build-verified in this session**, since Docker isn't installed
+in this development environment. *Why write anyway rather than wait:* the user explicitly chose
+this tradeoff (`AskUserQuestion`: "Write it, you build/test it") — a deployable artifact that's
+plausible-but-unverified is still a meaningfully stronger artifact than none, and the exact
+`docker build`/`docker compose up` commands are handed to the user in the README's new Deployment
+section for them to confirm. **`docker-compose.yml` mounts a named volume over the whole `/app`
+working directory**, not just the SQLite file path — an earlier draft tried mounting a volume
+directly onto `infraguardian.db`, but Docker can create a directory at an unmounted path on first
+container start rather than preserving it as a file, which is a subtler failure mode than
+mounting the whole directory (Docker pre-populates a named volume from the image's `/app` on
+first start, so the db file persists across restarts). Known tradeoff of the whole-directory
+mount, stated in the compose file's own comment: a later code change won't appear in the running
+container until `docker compose down -v` recreates the volume — acceptable at this project's
+single-container, non-rolling-deploy scope.
+
+**Decision 5 — Real-model numbers are a small manual spot-check (~5 scenarios), not a full
+re-run of the 104-case harness against a real provider.** *Why:* `evaluation/evaluator.py`'s own
+docstring already scopes its claims to `FakeInfraGuardianModel` by design; re-running the full
+104-case suite against a billed API for every future evaluator change would turn a free,
+offline, CI-safe harness into a costly one for marginal benefit, since the harness's actual job
+(catching regressions in deterministic threshold/routing/calibration logic) doesn't need a real
+model to do. The spot-check exists only to produce an honestly-labeled real-provider latency/
+cost/RCA-quality data point, not to replace the harness.
+
+**Verification:** `uv run pytest -q` → 88 passed (79 from M1-M5 + 4 new `test_collectors.py`
+cases + 5 new cost-tracking cases across `test_llm.py`/`test_observability.py`).
+`uv run python -m evaluation.evaluator` unchanged at 100% across all metrics — confirms the cost-
+tracking plumbing didn't regress the existing fake-model harness. `uv run python -m cli.main
+live` run manually against this machine's real metrics (see Decision 1). Docker build/run
+verification deferred to the user, per Decision 4.
+
+---
+
+## 2026-10-09 — Pin the package index to public PyPI, drop a dependency on a private lockfile mirror
+
+**Decision:** Added an explicit `[[tool.uv.index]]` block to `pyproject.toml` pinning
+`https://pypi.org/simple` as the default index, project-scoped (not a global/user-level
+override). `uv.lock` needs regenerating against that index (`uv lock`) to replace every
+internal-mirror URL it currently records.
+
+**Why:** The development machine's global `uv` config (`~/.config/uv/uv.toml`) defaulted to a private, authenticated PyPI mirror,
+which `uv lock` silently resolved and recorded into every package
+entry in `uv.lock` — a portfolio project meant to be cloned and run by anyone outside that
+network can't resolve a lockfile pointing at an internal, authenticated mirror. The fix has to
+live in the project's own `pyproject.toml` (not just "run `uv lock` once off a different
+machine") so the pin survives regeneration on *any* machine, including ones that also have an
+internal mirror configured as their global default.
+
+**Alternatives considered:**
+1. A `uv.toml` at the repo root instead of `[tool.uv.index]` in `pyproject.toml` — functionally
+   equivalent; `pyproject.toml` was preferred to keep all project config in one file rather than
+   add a second config file for one setting.
+2. Just re-run `uv lock` on a machine with no internal mirror configured — rejected because
+   nothing would stop a private mirror's URLs from silently reappearing the next time someone regenerates
+   the lock on a machine with one configured; the index pin makes "resolve against public PyPI" the
+   project's own property, not a property of whoever happens to run the command.
+
+**Note:** regenerating `uv.lock` against this pin was explicitly left to the user to run
+locally (`uv lock`, then `uv run pytest -q` to confirm) — the harness's own permission
+classifier declined to let the agent execute that resolution step itself here, treating a
+network-reaching registry change as needing an explicit go-ahead rather than inferring one from
+a general request to drop the private-mirror lock entries. The `pyproject.toml` pin is in place either way;
+only the lockfile regeneration itself is pending.
+

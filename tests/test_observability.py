@@ -57,3 +57,22 @@ def test_reset_clears_all_recorded_data(recorder):
     snap = recorder.snapshot()
     assert snap.total_agent_calls == 0
     assert snap.total_incidents == 0
+
+
+def test_cost_per_incident_averages_recorded_call_costs_over_incidents(recorder):
+    recorder.record_agent_call("db", 10.0, success=True, cost_usd=0.02)
+    recorder.record_agent_call("synthesis", 5.0, success=True, cost_usd=0.01)
+    recorder.record_incident(100.0, RoutingDecision.AUTO_REMEDIATE, 0.9)
+
+    snap = recorder.snapshot()
+    assert snap.cost_per_incident_usd == pytest.approx(0.03)
+
+
+def test_cost_per_incident_ignores_calls_with_no_cost_recorded(recorder):
+    """A call with `cost_usd=None` (e.g. a failed call, or the pre-cost-tracking default) must
+    not be treated as a free $0 call — it's simply excluded from the sum."""
+    recorder.record_agent_call("db", 10.0, success=True, cost_usd=None)
+    recorder.record_incident(100.0, RoutingDecision.ESCALATE, 0.5)
+
+    snap = recorder.snapshot()
+    assert snap.cost_per_incident_usd == pytest.approx(0.0)

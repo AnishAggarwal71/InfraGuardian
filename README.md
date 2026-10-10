@@ -53,11 +53,35 @@ offline, zero-cost lookup table keyed on breached-rule names, used by default so
 pipeline, test suite, and evaluation harness run with no API key and no network access. It does
 not simulate real reasoning — that's a deliberate, documented simplification, not a quality claim.
 
+## Real metric collection
+
+`tools/collectors.py` defines `MetricCollector` as a `Protocol` — anything exposing
+`.collect() -> MetricSample` works, no inheritance required. Two implementations exist today:
+`SimulatorCollector` (replays a fixed scenario sample-by-sample, used by every demo/test) and
+`PsutilCollector` (reads this host's real CPU/mem/swap/load via `psutil`). Run it directly
+against your own machine's live metrics — no fixtures involved:
+
+```bash
+uv run python -m cli.main live
+```
+
+DB and GPU domains are still simulator-only in this MVP (a real DB-status-query or `pynvml`
+collector would implement the same Protocol — PRD FR-03's "collector abstraction is
+load-bearing" is the reason this swap required zero changes to the rule engine, agents, or
+orchestrator).
+
 ## Setup
 
 ```bash
 uv sync
 ```
+
+`pyproject.toml` pins the package index to public PyPI explicitly
+(`[[tool.uv.index]]`, `default = true`) so `uv sync`/`uv lock` resolve the same way on any
+machine, regardless of a developer's own global `uv`/`pip` config (e.g. a corporate Artifactory
+mirror set as that machine's default index) — the project's dependency resolution isn't allowed
+to depend on where it happens to be run. If you change dependencies, regenerate the lock with
+`uv lock` before committing.
 
 Runs entirely offline by default (fake model). To use a real provider:
 
@@ -73,6 +97,7 @@ uv run python -m cli.main list                                    # available sc
 uv run python -m cli.main analyze db_connection_pool_exhaustion    # human-readable summary
 uv run python -m cli.main analyze gpu_ecc_errors --json            # full IncidentReport JSON
 uv run python -m cli.main analyze db_healthy cpu_mem_healthy --no-persist
+uv run python -m cli.main live                                     # analyze this host's real CPU/mem/swap/load
 uv run python -m cli.main metrics                                 # self-observability snapshot
 ```
 
@@ -140,10 +165,36 @@ every specialist/synthesis call and every completed incident: invocation counts,
 latency, failure rate, end-to-end latency (p50/p95), routing-decision distribution, and
 confidence distribution. Exposed via `GET /metrics` and `cli.main metrics`.
 
-**Known gap:** cost-per-incident (PRD §11) is not implemented. `with_structured_output()`
-returns a parsed Pydantic instance, not the raw message a provider attaches token-usage
-metadata to — getting real token counts needs `include_raw=True` and reshaping every call site.
-Reported explicitly as `null` rather than faked.
+Cost-per-incident (PRD §11) is computed from real token usage: every specialist/synthesis call
+goes through `tools.llm.invoke_structured()`, which requests `include_raw=True` from
+`with_structured_output()` so the raw message's `usage_metadata` survives, prices it against a
+small hardcoded per-model table, and hands the result to `record_agent_call(cost_usd=...)`.
+`snapshot()` averages the recorded per-call costs over completed incidents.
+
+**Known gap:** the pricing table (`tools/llm._PRICING_PER_MILLION_TOKENS`) only covers a
+handful of Anthropic model strings — an unlisted model (including the offline fake model) prices
+every call at `$0.00` rather than raising, so swapping `INFRAGUARDIAN_MODEL` to an unlisted model
+silently under-reports cost instead of failing loudly. Extend the table when adding a new model.
+
+## Deployment
+
+```bash
+docker build -t infraguardian .
+docker run -p 8000:8000 --env-file .env infraguardian
+# or, for a persistent incident store across restarts:
+docker compose up --build
+```
+
+- `.env` (copy from `.env.example`) carries `INFRAGUARDIAN_MODEL`/`ANTHROPIC_API_KEY`; omit both
+  to run the container against the offline fake model.
+- `docker-compose.yml` mounts a named volume over `/app` so `infraguardian.db` survives a
+  container restart; a code change requires `docker compose down -v` to pick up (documented
+  tradeoff in the compose file's comment, acceptable at this project's single-container scope).
+- Confirm with `curl localhost:8000/health` once the container is up.
+- Out of scope at this MVP stage, same as the rest of the project: no auth in front of the API,
+  no TLS termination, no Postgres/multi-replica story, no PagerDuty/Slack integration.
+
+
 
 ## Tests
 
@@ -151,14 +202,14 @@ Reported explicitly as `null` rather than faked.
 uv run pytest -q
 ```
 
-79 passing cases across 13 files, covering metric contracts, the rule engine (every scenario's
+88 passing cases across 14 files, covering metric contracts, the rule engine (every scenario's
 first/last sample classified correctly), the fake model, specialist agents, LangGraph
 fan-out/fan-in and synthesis, confidence calibration, routing (a dedicated table-driven
 safety-invariant checklist — critical-never-auto-remediates and low-confidence-always-escalates
 are explicit test cases, not incidental coverage), remediation runbooks, incident-store
-idempotency, the orchestrator's fail-closed behavior on a raising specialist, the API, and the
-evaluation harness itself. All run offline against the fake model — no network or API key
-required for CI.
+idempotency, the orchestrator's fail-closed behavior on a raising specialist, real and simulated
+metric collectors, LLM cost pricing, the API, and the evaluation harness itself. All run offline
+against the fake model — no network or API key required for CI.
 
 ## Limitations
 
@@ -173,19 +224,24 @@ required for CI.
   confidence with every contributing finding `SAFE` — a single runbook only ever targets one
   domain, so auto-executing one domain's fix while leaving a corroborated second domain
   unaddressed is a scope mismatch this MVP doesn't attempt to solve.
-- No real-provider (Anthropic/Gemini) latency, cost, or accuracy numbers yet — deferred until an
-  API key is configured; the model-agnostic design means that's a config change, not a rebuild.
-- Cost-per-incident observability is unimplemented (see Observability above).
+- Real-provider numbers (see Evaluation's spot-check subsection) are a small manual sample, not
+  a held-out eval set — the 104-case harness above remains fake-model-only by design.
+- The pricing table backing `cost_per_incident_usd` covers a handful of model strings; an
+  unlisted model prices at `$0.00` rather than erroring (see Observability above).
+- The real collector (`PsutilCollector`) covers CPU/mem only — DB and GPU domains remain
+  simulator-only in this MVP.
+- No auth on the API/Docker deployment — see Deployment below; this is a conscious MVP scope
+  limit, not an oversight.
 
 ## Simulator → production collector migration path
 
 `tools/collectors.py` defines `MetricCollector` as a `Protocol` (structural typing, not
-inheritance): anything exposing `.collect() -> MetricSample` works. The only implementation
-today is `SimulatorCollector`, which replays a fixed scenario sample-by-sample. A real collector
-(`psutil` for CPU/mem, `pynvml` for GPU, a DB driver's status queries for DB) just needs to
-implement the same `.collect()` signature — no change required to the rule engine, specialist
-agents, orchestrator, or anything downstream of ingestion (PRD FR-03). This is the concrete
-mechanism behind "collector abstraction is load-bearing."
+inheritance): anything exposing `.collect() -> MetricSample` works. `SimulatorCollector` replays
+fixed scenarios; `PsutilCollector` (see Real metric collection above) is the first real
+implementation, covering CPU/mem. A GPU collector (`pynvml`) or DB collector (a driver's status
+queries) just needs to implement the same `.collect()` signature — no change required to the
+rule engine, specialist agents, orchestrator, or anything downstream of ingestion (PRD FR-03).
+This is the concrete mechanism behind "collector abstraction is load-bearing."
 
 ## Repository layout
 
@@ -196,11 +252,12 @@ infra-guardian/
 ├── tools/                   # metrics, thresholds, collectors, llm, confidence, routing,
 │                             #   remediation, scenarios, observability
 ├── api/server.py            # FastAPI: POST /analyze, GET /health, GET /metrics
-├── cli/main.py               # CLI: list, analyze, metrics
+├── cli/main.py               # CLI: list, analyze, live, metrics
 ├── storage/incident_store.py # SQLite incident + remediation-action audit trail
 ├── evaluation/               # fixtures/ + evaluator.py + reports/latest.json
 ├── tests/
 ├── scripts/demo_incident.py  # manual verification script (not the FR-17 CLI — see DECISIONS.md)
+├── Dockerfile / docker-compose.yml / .dockerignore / .env.example
 ├── DECISIONS.md               # full build decision log
 ├── MILESTONES.md              # time-boxed milestone tracking
 └── requirements.txt           # generated via `uv export` — uv.lock is the source of truth

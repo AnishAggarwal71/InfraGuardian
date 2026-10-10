@@ -8,11 +8,13 @@ calls into as it runs. Kept intentionally separate from `storage/incident_store.
 is the durable incident audit trail (PRD §13); this one is operational telemetry about
 InfraGuardian's own behavior, read via `snapshot()` from the CLI/API, not written to disk.
 
-Token/cost tracking (PRD §11's "cost/incident") is NOT implemented: `with_structured_output()`
-returns a parsed Pydantic instance, not the raw `AIMessage` a provider attaches token-usage
-metadata to, so getting real token counts would require `include_raw=True` and reshaping every
-specialist/synthesis call site. Documented here as a known gap rather than faked with a made-up
-number — `cost_per_incident_usd` is always `None` in the snapshot until that's implemented.
+Token/cost tracking (PRD §11's "cost/incident") is now wired through `tools.llm.invoke_structured`:
+every specialist/synthesis call prices its real token usage and passes the result into
+`record_agent_call`'s `cost_usd` param. `cost_per_incident_usd` in `snapshot()` is the sum of all
+recorded call costs divided by the number of completed incidents — `None` only when zero
+incidents have run yet. The fake model reports a real (not faked) `$0.00`, since it performs no
+real inference. Coverage is limited to the pricing table in `tools.llm`, which only lists models
+this project has actually been run against.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ class AgentCallRecord(BaseModel):
     latency_ms: float
     success: bool
     recorded_at: datetime
+    cost_usd: float | None = None
 
 
 class IncidentRecord(BaseModel):
@@ -75,8 +78,10 @@ class _MetricsRecorder:
         self._incidents: list[IncidentRecord] = []
         self._collector_failures = 0
 
-    def record_agent_call(self, agent: str, latency_ms: float, success: bool) -> None:
-        """Record one specialist/synthesis LLM invocation's outcome and latency."""
+    def record_agent_call(
+        self, agent: str, latency_ms: float, success: bool, cost_usd: float | None = None
+    ) -> None:
+        """Record one specialist/synthesis LLM invocation's outcome, latency, and USD cost."""
         with self._lock:
             self._agent_calls.append(
                 AgentCallRecord(
@@ -84,6 +89,7 @@ class _MetricsRecorder:
                     latency_ms=latency_ms,
                     success=success,
                     recorded_at=datetime.now(timezone.utc),
+                    cost_usd=cost_usd,
                 )
             )
             if not success:
@@ -137,6 +143,9 @@ class _MetricsRecorder:
 
         confidences = [i.confidence for i in incidents]
 
+        costs = [c.cost_usd for c in calls if c.cost_usd is not None]
+        cost_per_incident = (sum(costs) / len(incidents)) if incidents else None
+
         return ObservabilitySnapshot(
             total_agent_calls=total_calls,
             agent_call_failures=failures,
@@ -150,7 +159,7 @@ class _MetricsRecorder:
             confidence_min=min(confidences) if confidences else 0.0,
             confidence_max=max(confidences) if confidences else 0.0,
             collector_failures=collector_failures,
-            cost_per_incident_usd=None,
+            cost_per_incident_usd=cost_per_incident,
         )
 
 

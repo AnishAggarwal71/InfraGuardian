@@ -1,0 +1,18 @@
+services:
+  infraguardian:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    # Named volume over the whole working dir: Docker pre-populates it from the image's /app
+    # on first container start, so `infraguardian.db` (written at the plain relative path
+    # `storage.incident_store.DEFAULT_DB_PATH`) persists across restarts without any code
+    # change. Known tradeoff: a later code change won't appear until the volume is recreated
+    # (`docker compose down -v`) — acceptable for this project's current single-container,
+    # non-rolling-deploy scope.
+    volumes:
+      - infraguardian_data:/app
+
+volumes:
+  infraguardian_data:

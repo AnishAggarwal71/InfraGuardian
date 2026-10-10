@@ -9,6 +9,7 @@ dependencies = [
     "langchain-anthropic>=1.7.5",
     "langchain-google-genai>=4.4.0",
     "langgraph>=1.2.12",
+    "psutil>=6.0",
     "pydantic>=2.6",
     "uvicorn[standard]>=0.54.0",
 ]
@@ -20,3 +21,11 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+
+# Pin the package index to public PyPI at the project level so this repo resolves/builds the
+# same way outside this machine's global uv config, which otherwise defaults to an internal
+# Artifactory mirror (~/.config/uv/uv.toml) that isn't reachable from outside that network.
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true

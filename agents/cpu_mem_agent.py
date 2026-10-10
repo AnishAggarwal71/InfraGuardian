@@ -8,7 +8,7 @@ CPU/memory domain as anomalous.
 from __future__ import annotations
 
 from agents.schemas import SpecialistFinding
-from tools.llm import get_chat_model
+from tools.llm import get_chat_model, invoke_structured
 from tools.metrics import CPUMemMetrics
 from tools.thresholds import DetectionResult
 
@@ -35,5 +35,4 @@ def _build_prompt(sample: CPUMemMetrics, detection: DetectionResult) -> str:
 
 def diagnose(sample: CPUMemMetrics, detection: DetectionResult) -> SpecialistFinding:
     """Produce a structured RCA finding for an anomalous CPU/memory sample."""
-    model = get_chat_model().with_structured_output(SpecialistFinding)
-    return model.invoke(_build_prompt(sample, detection))
+    return invoke_structured(get_chat_model(), SpecialistFinding, _build_prompt(sample, detection))

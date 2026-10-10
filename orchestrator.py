@@ -36,7 +36,7 @@ from agents.schemas import (
 )
 from storage import incident_store
 from tools.confidence import calibrate
-from tools.llm import get_chat_model
+from tools.llm import get_chat_model, get_last_cost_usd, invoke_structured
 from tools.metrics import Domain, MetricSample
 from tools.observability import RECORDER
 from tools.remediation import RUNBOOKS
@@ -121,7 +121,12 @@ def _make_specialist_node(domain: Domain):
         start = time.perf_counter()
         try:
             finding = _SPECIALISTS[domain](sample, detection)
-            RECORDER.record_agent_call(domain.value, (time.perf_counter() - start) * 1000, success=True)
+            RECORDER.record_agent_call(
+                domain.value,
+                (time.perf_counter() - start) * 1000,
+                success=True,
+                cost_usd=get_last_cost_usd(),
+            )
         except Exception as exc:  # noqa: BLE001 - deliberately broad: any failure fails closed
             RECORDER.record_agent_call(domain.value, (time.perf_counter() - start) * 1000, success=False)
             finding = _sentinel_finding(domain, exc)
@@ -222,9 +227,15 @@ def _synthesize(state: IncidentState) -> IncidentState:
 
     _start = time.perf_counter()
     try:
-        synthesis_model = get_chat_model().with_structured_output(SynthesisOutput)
-        synthesis: SynthesisOutput = synthesis_model.invoke(_build_synthesis_prompt(findings))
-        RECORDER.record_agent_call("synthesis", (time.perf_counter() - _start) * 1000, success=True)
+        synthesis: SynthesisOutput = invoke_structured(
+            get_chat_model(), SynthesisOutput, _build_synthesis_prompt(findings)
+        )
+        RECORDER.record_agent_call(
+            "synthesis",
+            (time.perf_counter() - _start) * 1000,
+            success=True,
+            cost_usd=get_last_cost_usd(),
+        )
     except Exception as exc:  # noqa: BLE001 - deliberately broad: any failure fails closed
         RECORDER.record_agent_call("synthesis", (time.perf_counter() - _start) * 1000, success=False)
         synthesis = _sentinel_synthesis_output(exc)

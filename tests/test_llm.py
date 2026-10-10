@@ -2,13 +2,15 @@
 Tests for the model-agnostic chat model factory (`tools/llm.py`).
 
 Covers: zero-config default is the offline fake model and produces schema-valid output; an
-invalid provider string surfaces a clear error rather than silently falling back.
+invalid provider string surfaces a clear error rather than silently falling back; and
+`invoke_structured`'s cost-tracking plumbing (fake model reports real $0, a known model prices
+correctly, an unknown model string prices as free rather than raising).
 """
 
 import pytest
 
 from agents.schemas import SpecialistFinding
-from tools.llm import FakeInfraGuardianModel, get_chat_model
+from tools.llm import FakeInfraGuardianModel, get_chat_model, get_last_cost_usd, invoke_structured, _price_usage
 
 
 def test_get_chat_model_defaults_to_fake_model_when_env_unset(monkeypatch):
@@ -36,3 +38,23 @@ def test_fake_model_call_count_increments_on_invoke():
     assert fake.call_count == 0
     model.invoke("cpu_pct=98.0 (max 90.0)")
     assert fake.call_count == 1
+
+
+def test_invoke_structured_against_fake_model_returns_parsed_result_and_zero_cost():
+    fake = FakeInfraGuardianModel()
+    result = invoke_structured(fake, SpecialistFinding, "cpu_pct=98.0 (max 90.0)")
+    assert isinstance(result, SpecialistFinding)
+    assert get_last_cost_usd() == pytest.approx(0.0)
+
+
+def test_price_usage_known_model_computes_expected_cost():
+    # claude-sonnet-4-5-20250929: $3/M input, $15/M output.
+    cost = _price_usage(
+        "claude-sonnet-4-5-20250929", {"input_tokens": 1000, "output_tokens": 1000}
+    )
+    assert cost == pytest.approx((1000 * 3.0 + 1000 * 15.0) / 1_000_000)
+
+
+def test_price_usage_unknown_model_prices_as_free():
+    cost = _price_usage("some-unlisted-model", {"input_tokens": 1000, "output_tokens": 1000})
+    assert cost == 0.0

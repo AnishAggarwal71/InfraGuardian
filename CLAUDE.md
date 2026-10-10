@@ -141,3 +141,11 @@ one of these in a way that's hard to reverse later.
   dict from a specialist agent and hope it's shaped right.
 - When adding a new remediation action, it must be added to the allowlist explicitly — no
   dynamic action construction from LLM text.
+- `pyproject.toml` pins the package index to public PyPI explicitly (`[[tool.uv.index]]`,
+  `default = true`). This repo must resolve/lock the same way regardless of a developer's own
+  global `uv`/`pip` config (e.g. a corporate Artifactory mirror set as that machine's default
+  index) — a portfolio project has to be clonable and runnable outside any one person's network.
+  Don't remove this pin or let `uv.lock` re-resolve against an internal/authenticated mirror;
+  if dependencies change, regenerate with `uv lock` on a machine where this pin is honored and
+  confirm `uv.lock` has no internal-mirror URLs before committing it (see `DECISIONS.md`,
+  2026-10-09).
