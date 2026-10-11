@@ -26,19 +26,18 @@ three cases matched the fake-model routing expectation.
 
 ## Issues found
 
-### P0 — critical routing depends on model severity
+### P0 — critical routing depends on model severity — IMPLEMENTED
 
 `ecc_errors > 0` is a deterministic zero-tolerance breach, but a real model returned `high`.
 Because `tools.routing.route()` receives model-produced report severity, it returned
 `recommend` rather than `escalate`. A real model must not be able to downgrade a safety-critical
 signal.
 
-**Recommended change:** add a rule-level criticality flag/severity floor to the detection result
-and apply it before routing. GPU ECC breaches should force `critical` and `escalate`, including
-when a specialist fails, produces malformed output, or assigns lower severity.
-
-**Acceptance test:** a parameterized test proves every non-zero ECC sample routes to `ESCALATE`
-for fake, valid real-model-shaped, malformed, and low-severity specialist outputs.
+**Fix:** `tools/severity.py` adds a deterministic severity floor (`severity_floor()`) applied in
+`orchestrator._synthesize()` right next to the existing confidence calibration. The
+`_RULE_MIN_SEVERITY` mapping forces `ecc_errors` to `CRITICAL` regardless of what the model
+returns. 11 regression tests in `tests/test_severity_floor.py` cover every variant, including an
+end-to-end test through `run_incident()` proving ECC breach → CRITICAL → ESCALATE.
 
 ### P1 — agents see only a point-in-time sample
 
@@ -95,8 +94,8 @@ flag for unlisted models rather than silently returning zero.
 
 ## Recommended implementation order
 
-1. **Blocker:** enforce rule-level criticality for ECC errors and add the routing regression
-   tests.
+1. ~~**Blocker:** enforce rule-level criticality for ECC errors and add the routing regression
+   tests.~~ **Done** — `tools/severity.py`, applied in `orchestrator._synthesize()`, 11 tests.
 2. Add the live evaluation ledger on top of the new trace recorder.
 3. Upgrade collectors/prompts from a final sample to a bounded metric window.
 4. Replace model-only automation safety with runbook-specific deterministic preconditions; revise

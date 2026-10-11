@@ -41,6 +41,7 @@ from tools.metrics import Domain, MetricSample
 from tools.observability import RECORDER
 from tools.remediation import RUNBOOKS
 from tools.routing import route
+from tools.severity import severity_floor
 from tools.thresholds import DetectionResult, evaluate
 from tools.tracing import new_trace_id, record_trace_event, tracing_enabled
 
@@ -246,6 +247,7 @@ def _synthesize(state: IncidentState) -> IncidentState:
         synthesis = _sentinel_synthesis_output(exc)
 
     calibrated_confidence = calibrate(synthesis.confidence, findings, synthesis.correlations)
+    floored_severity = severity_floor(synthesis.severity, state["detections"])
 
     report = IncidentReport(
         incident_id=incident_id,
@@ -256,7 +258,7 @@ def _synthesize(state: IncidentState) -> IncidentState:
         evidence=evidence,
         unified_root_cause=synthesis.unified_root_cause,
         correlations=synthesis.correlations,
-        severity=synthesis.severity,
+        severity=floored_severity,
         confidence=calibrated_confidence,
         predictive_risk=synthesis.predictive_risk,
         priority_ordered_actions=synthesis.priority_ordered_actions,

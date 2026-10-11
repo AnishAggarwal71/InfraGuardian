@@ -5,6 +5,11 @@ services:
       - "8000:8000"
     env_file:
       - .env
+    environment:
+      - POSTGRES_DSN=postgresql://infraguardian:localdev@postgres:5432/infraguardian
+    depends_on:
+      postgres:
+        condition: service_healthy
     # Named volume over the whole working dir: Docker pre-populates it from the image's /app
     # on first container start, so `infraguardian.db` (written at the plain relative path
     # `storage.incident_store.DEFAULT_DB_PATH`) persists across restarts without any code
@@ -14,5 +19,26 @@ services:
     volumes:
       - infraguardian_data:/app
 
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: infraguardian
+      POSTGRES_USER: infraguardian
+      POSTGRES_PASSWORD: localdev
+    # Low max_connections so the demo load generator can exhaust the pool with a manageable
+    # number of held connections (~40-45), triggering the connection_pool_utilization_pct rule.
+    command: ["postgres", "-c", "max_connections=50", "-c", "shared_preload_libraries=pg_stat_statements"]
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U infraguardian -d infraguardian"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/postgres_init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
 volumes:
   infraguardian_data:
+  postgres_data:

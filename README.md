@@ -82,19 +82,37 @@ not simulate real reasoning — that's a deliberate, documented simplification, 
 ## Real metric collection
 
 `tools/collectors.py` defines `MetricCollector` as a `Protocol` — anything exposing
-`.collect() -> MetricSample` works, no inheritance required. Two implementations exist today:
-`SimulatorCollector` (replays a fixed scenario sample-by-sample, used by every demo/test) and
-`PsutilCollector` (reads this host's real CPU/mem/swap/load via `psutil`). Run it directly
-against your own machine's live metrics — no fixtures involved:
+`.collect() -> MetricSample` works, no inheritance required. Three implementations exist today:
+`SimulatorCollector` (replays a fixed scenario sample-by-sample, used by every demo/test),
+`PsutilCollector` (reads this host's real CPU/mem/swap/load via `psutil`), and
+`PostgresCollector` (queries a live PostgreSQL instance for DB domain metrics via `psycopg2`).
+
+Run `PsutilCollector` directly against your own machine's live metrics — no fixtures involved:
 
 ```bash
 uv run python -m cli.main live
 ```
 
-DB and GPU domains are still simulator-only in this MVP (a real DB-status-query or `pynvml`
-collector would implement the same Protocol — PRD FR-03's "collector abstraction is
-load-bearing" is the reason this swap required zero changes to the rule engine, agents, or
-orchestrator).
+GPU domain is still simulator-only in this MVP (a `pynvml` collector would implement the same
+Protocol — PRD FR-03's "collector abstraction is load-bearing" is the reason adding each new
+real collector required zero changes to the rule engine, agents, or orchestrator).
+
+## Real Postgres integration
+
+`PostgresCollector` connects to a running PostgreSQL instance and queries `pg_stat_activity`,
+`pg_settings`, `pg_stat_database`, and `pg_stat_statements` for the five DB domain metrics. A
+docker-compose demo creates a controlled connection pool exhaustion scenario against a real
+Postgres:
+
+```bash
+docker compose up -d                                  # start Postgres (max_connections=50)
+uv run python scripts/demo_postgres_load.py &         # hold ~43 connections (>85% utilization)
+uv run python scripts/demo_postgres.py                # collect real metrics → full pipeline
+# pipeline detects connection_pool_utilization_pct breach, diagnoses, routes
+```
+
+Known limitation: `replication_lag_sec` is 0.0 in this single-node demo — there is no replica
+to lag against. This is documented honestly rather than fabricated.
 
 ## Continuous monitoring
 
@@ -289,13 +307,15 @@ above).
 uv run pytest -q
 ```
 
-94 passing cases across 15 files, covering metric contracts, the rule engine (every scenario's
+109 passing cases across 17 files, covering metric contracts, the rule engine (every scenario's
 first/last sample classified correctly), the fake model, specialist agents, LangGraph
 fan-out/fan-in and synthesis, confidence calibration, routing (a dedicated table-driven
 safety-invariant checklist — critical-never-auto-remediates and low-confidence-always-escalates
 are explicit test cases, not incidental coverage), remediation runbooks, incident-store
 idempotency, the orchestrator's fail-closed behavior on a raising specialist, real and simulated
-metric collectors, the continuous watch loop's edge-triggered alerting and persist-only-on-
+metric collectors, the Postgres collector (monkeypatched, no live DB needed), the deterministic
+severity floor for safety-critical rules (P0 fix — parameterized across every ECC breach
+variant), the continuous watch loop's edge-triggered alerting and persist-only-on-
 anomaly rule, LLM cost pricing, the API, and the evaluation harness itself. All run offline
 against the fake model — no network or API key required for CI.
 
@@ -318,8 +338,8 @@ against the fake model — no network or API key required for CI.
   not a held-out eval set, and no aggregate real-model accuracy numbers are published here.
 - The pricing table backing `cost_per_incident_usd` covers a handful of model strings; an
   unlisted model prices at `$0.00` rather than erroring (see Observability above).
-- The real collector (`PsutilCollector`) covers CPU/mem only — DB and GPU domains remain
-  simulator-only in this MVP.
+- The real collector (`PsutilCollector`) covers CPU/mem; `PostgresCollector` covers DB. GPU
+  domain remains simulator-only in this MVP.
 - No auth on the API/Docker deployment — see Deployment below; this is a conscious MVP scope
   limit, not an oversight.
 
@@ -339,15 +359,18 @@ This is the concrete mechanism behind "collector abstraction is load-bearing."
 infra-guardian/
 ├── orchestrator.py          # LangGraph StateGraph: screen -> specialists -> synthesize -> route
 ├── agents/                  # schemas.py (shared contracts) + one specialist per domain
-├── tools/                   # metrics, thresholds, collectors, llm, confidence, routing,
-│                             #   remediation, scenarios, observability
+├── tools/                   # metrics, thresholds, collectors, llm, confidence, severity,
+│                             #   routing, remediation, scenarios, observability, tracing
 ├── api/server.py            # FastAPI: POST /analyze, GET /health, GET /metrics
 ├── cli/main.py               # CLI: list, analyze, live, watch, metrics
 ├── storage/incident_store.py # SQLite incident + remediation-action audit trail
-├── evaluation/               # fixtures/ + evaluator.py + reports/latest.json
+├── evaluation/               # fixtures/ + evaluator.py + reports/ + REAL_MODEL_VALIDATION.md
 ├── docs/                      # animated system design + learn-InfraGuardian HTML walkthroughs
 ├── tests/
 ├── scripts/demo_incident.py  # manual verification script (not the FR-17 CLI — see DECISIONS.md)
+├── scripts/demo_postgres.py  # real Postgres integration demo (see Real Postgres integration)
+├── scripts/demo_postgres_load.py  # connection pressure generator for the Postgres demo
+├── scripts/postgres_init.sql # Postgres init (enables pg_stat_statements)
 ├── Dockerfile / docker-compose.yml / .dockerignore / .env.example
 ├── render.yaml                # Render Blueprint for the public demo deploy
 ├── LICENSE                    # MIT

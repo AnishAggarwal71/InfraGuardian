@@ -678,3 +678,76 @@ The live ledger is the next required follow-up; the P0 finding is to make safety
 thresholds such as non-zero ECC errors impose a deterministic severity/routing floor before an
 LLM can influence the decision.
 
+---
+
+## 2026-10-11 — P0 fix: deterministic severity floor for safety-critical rules
+
+**Decision:** add `tools/severity.py` with a `severity_floor()` function that enforces a
+minimum severity for breached rules that carry a non-negotiable safety meaning. Applied in
+`orchestrator._synthesize()` right next to the existing `calibrate()` call, so both confidence
+and severity now have deterministic corrections before they reach the routing gate.
+
+**Why:** the real-model validation (above) found that Claude Haiku downgraded a GPU ECC fault
+from CRITICAL to HIGH, causing `route()` to return RECOMMEND instead of ESCALATE. ECC errors
+(`ecc_errors > 0`) are a hardware fault with a zero-tolerance threshold — the model must not be
+able to soften that. This parallels how `tools/confidence.py` already caps model-produced
+confidence against deterministic signals; severity had no such protection.
+
+**Design:** `_RULE_MIN_SEVERITY` maps rule names (from `BreachedRule.rule_name`) to a
+`Severity` floor. `severity_floor()` scans all breached rules across all detection results and
+returns `max(model_severity, highest_floor)`. The mapping lives in `tools/severity.py` rather
+than `tools/thresholds.py` because `thresholds.py` deliberately avoids importing from
+`agents.schemas` to stay free of model/agent coupling — `severity.py` bridges both sides, same
+import pattern as `tools/confidence.py`.
+
+**Acceptance tests:** 11 new tests in `tests/test_severity_floor.py` — parameterized unit tests
+for every ECC breach variant (LOW→CRITICAL, HIGH→CRITICAL, CRITICAL unchanged), non-ECC rules
+unchanged, multi-domain with ECC wins; plus an end-to-end test through `run_incident()` proving
+a GPU sample with `ecc_errors=3` produces `severity=CRITICAL` and `routing_decision=ESCALATE`
+regardless of what the model returns.
+
+**Verification:** 109 tests pass. The existing 104-case evaluation harness is unaffected (100%
+across all metrics) — the severity floor is invisible when the model already returns the correct
+severity.
+
+---
+
+## 2026-10-11 — Real Postgres integration demo
+
+**Decision:** add `PostgresCollector` to `tools/collectors.py` and a docker-compose demo that
+creates a controlled connection pool exhaustion scenario against a real Postgres instance. This
+is the second real collector after `PsutilCollector` (CPU/mem), proving the collector
+abstraction works across domains.
+
+**Why:** DB and GPU domains were simulator-only. A recruiter or interviewer asking "is any of
+this real?" can now see: real CPU/mem collection (psutil), real DB collection (psycopg2 →
+pg_stat_activity/pg_settings/pg_stat_database/pg_stat_statements), and a reproducible demo that
+triggers real anomaly detection. GPU remains simulator-only (no `pynvml` hardware available).
+
+**Sub-decisions:**
+
+1. **`psycopg2-binary` as the dependency** — widely available, no compilation, well-tested.
+   Follows the lazy-import convention (imported inside the class, not at module top-level).
+2. **`max_connections=50` in the demo Postgres** — small enough that ~43 held connections cross
+   the 85% utilization threshold, making the demo easy to run without needing hundreds of
+   threads.
+3. **`replication_lag_sec=0.0` hardcoded** — single-node demo has no replica. Documented
+   honestly rather than fabricated. A real multi-node deployment would query
+   `pg_stat_replication` or `pg_last_xact_replay_timestamp()`.
+4. **`pg_stat_statements` for latency** — enabled via `shared_preload_libraries` in the Postgres
+   command and `CREATE EXTENSION` in the init script. Reads `mean_exec_time` as the latency
+   proxy rather than inventing a synthetic p95 calculation.
+5. **Separate load generator (`demo_postgres_load.py`)** — holds connections in daemon threads
+   so the demo runner can be invoked independently, making the demo flow two-terminal and easy
+   to follow in a README walkthrough.
+
+**Alternatives considered:**
+- Using `asyncpg` instead of `psycopg2-binary` — rejected; synchronous is simpler for a
+  collector that's called once per tick, and `psycopg2-binary` has fewer install issues.
+- Adding a real remediation (e.g. `pg_terminate_backend`) — deferred; the validation doc's P1-3
+  correctly identifies that deterministic runbook preconditions should exist before any real
+  remediation executes.
+
+**Verification:** 3 new tests in `tests/test_postgres_collector.py` (monkeypatched, no live DB
+needed). Docker demo verification deferred to the user (this sandbox has no Docker daemon).
+

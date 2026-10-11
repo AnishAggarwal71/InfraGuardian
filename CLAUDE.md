@@ -159,3 +159,13 @@ one of these in a way that's hard to reverse later.
   only persist when the tick is actually anomalous. `run_incident`'s default-persist behavior is
   fine for one-shot CLI commands (`analyze`/`live`) but floods the `incidents` table if called
   on every tick of an indefinite loop (see `DECISIONS.md`, 2026-10-11).
+- Safety-critical threshold rules must have a corresponding entry in
+  `tools/severity._RULE_MIN_SEVERITY` that maps the rule name to a minimum `Severity`. The
+  orchestrator applies `severity_floor()` to the model-produced severity before routing, same
+  pattern as `calibrate()` for confidence. Omitting a floor is only valid when no routing
+  invariant depends on the breach being classified at a minimum severity level (see
+  `DECISIONS.md`, 2026-10-11, P0 fix).
+- `tools/thresholds.py` must not import from `agents/schemas.py` — it is the deterministic
+  pre-screen enforcement point (FR-05/FR-06) and stays free of model/agent coupling by design.
+  Severity-floor logic that needs `Severity` lives in `tools/severity.py` instead, bridging
+  both sides the same way `tools/confidence.py` does.
