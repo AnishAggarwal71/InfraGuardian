@@ -34,6 +34,7 @@ from __future__ import annotations
 import os
 import re
 import threading
+import time
 from typing import Any
 
 from langchain_core.messages import AIMessage
@@ -46,6 +47,7 @@ from agents.schemas import (
     SynthesisOutput,
 )
 from tools.metrics import Domain
+from tools.tracing import record_trace_event
 
 _SEVERITY_RANK = {
     Severity.LOW: 0,
@@ -328,6 +330,10 @@ _PRICING_PER_MILLION_TOKENS: dict[str, tuple[float, float]] = {
 _cost_local = threading.local()
 
 
+class StructuredOutputError(RuntimeError):
+    """Raised when a provider response cannot be converted to the requested output schema."""
+
+
 def _price_usage(model_name: str, usage: dict[str, int]) -> float:
     """Price one call's token usage against `_PRICING_PER_MILLION_TOKENS`; unknown model -> 0.0."""
     input_price, output_price = _PRICING_PER_MILLION_TOKENS.get(model_name, (0.0, 0.0))
@@ -345,7 +351,7 @@ def get_last_cost_usd() -> float | None:
     return getattr(_cost_local, "last_cost_usd", None)
 
 
-def invoke_structured(model: Any, schema: type, prompt: str) -> Any:
+def invoke_structured(model: Any, schema: type, prompt: str, trace_id: str | None = None) -> Any:
     """
     The one call site every specialist/synthesis LLM call goes through: requests `schema`-typed
     structured output from `model`, prices the real token usage (when the provider attaches
@@ -353,9 +359,86 @@ def invoke_structured(model: Any, schema: type, prompt: str) -> Any:
     computed cost for `get_last_cost_usd()` to read right after. Returns just the parsed
     structured object — callers are unaffected by the `include_raw` plumbing.
     """
-    result = model.with_structured_output(schema, include_raw=True).invoke(prompt)
-    raw = result["raw"]
     model_name = getattr(model, "model", None) or getattr(model, "model_name", None) or ""
+    start = time.perf_counter()
+    _cost_local.last_cost_usd = None
+
+    try:
+        result = model.with_structured_output(schema, include_raw=True).invoke(prompt)
+    except Exception as exc:
+        record_trace_event(
+            trace_id,
+            "llm_call",
+            success=False,
+            model_name=model_name,
+            schema=schema.__name__,
+            prompt=prompt,
+            latency_ms=(time.perf_counter() - start) * 1000,
+            error=exc,
+        )
+        raise
+
+    raw = result.get("raw") if isinstance(result, dict) else None
+    parsed = result.get("parsed") if isinstance(result, dict) else result
+    parsing_error = result.get("parsing_error") if isinstance(result, dict) else None
     usage = getattr(raw, "usage_metadata", None) or {}
     _cost_local.last_cost_usd = _price_usage(model_name, usage)
-    return result["parsed"]
+
+    if parsing_error is not None or parsed is None:
+        error = StructuredOutputError(
+            f"{schema.__name__} structured output was not parsed"
+            + (f": {parsing_error}" if parsing_error is not None else ".")
+        )
+        record_trace_event(
+            trace_id,
+            "llm_call",
+            success=False,
+            model_name=model_name,
+            schema=schema.__name__,
+            prompt=prompt,
+            raw_response=raw,
+            parsed_response=parsed,
+            parsing_error=parsing_error,
+            usage_metadata=usage,
+            cost_usd=_cost_local.last_cost_usd,
+            latency_ms=(time.perf_counter() - start) * 1000,
+            error=error,
+        )
+        raise error
+
+    if not isinstance(parsed, schema):
+        try:
+            parsed = schema.model_validate(parsed)
+        except Exception as exc:
+            error = StructuredOutputError(f"{schema.__name__} failed schema validation: {exc}")
+            record_trace_event(
+                trace_id,
+                "llm_call",
+                success=False,
+                model_name=model_name,
+                schema=schema.__name__,
+                prompt=prompt,
+                raw_response=raw,
+                parsed_response=parsed,
+                parsing_error=parsing_error,
+                usage_metadata=usage,
+                cost_usd=_cost_local.last_cost_usd,
+                latency_ms=(time.perf_counter() - start) * 1000,
+                error=error,
+            )
+            raise error from exc
+
+    record_trace_event(
+        trace_id,
+        "llm_call",
+        success=True,
+        model_name=model_name,
+        schema=schema.__name__,
+        prompt=prompt,
+        raw_response=raw,
+        parsed_response=parsed,
+        usage_metadata=usage,
+        cost_usd=_cost_local.last_cost_usd,
+        latency_ms=(time.perf_counter() - start) * 1000,
+    )
+    return parsed

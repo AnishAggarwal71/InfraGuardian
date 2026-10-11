@@ -42,6 +42,7 @@ from tools.observability import RECORDER
 from tools.remediation import RUNBOOKS
 from tools.routing import route
 from tools.thresholds import DetectionResult, evaluate
+from tools.tracing import new_trace_id, record_trace_event, tracing_enabled
 
 _SPECIALISTS = {
     Domain.DB: db_agent.diagnose,
@@ -71,6 +72,7 @@ class IncidentState(TypedDict, total=False):
     detections: dict[Domain, DetectionResult]
     findings: Annotated[dict[Domain, Any], _merge_findings]  # Domain -> SpecialistFinding
     report: IncidentReport
+    trace_id: str | None
 
 
 def _screen(state: IncidentState) -> IncidentState:
@@ -120,7 +122,7 @@ def _make_specialist_node(domain: Domain):
         detection = state["detections"][domain]
         start = time.perf_counter()
         try:
-            finding = _SPECIALISTS[domain](sample, detection)
+            finding = _SPECIALISTS[domain](sample, detection, trace_id=state.get("trace_id"))
             RECORDER.record_agent_call(
                 domain.value,
                 (time.perf_counter() - start) * 1000,
@@ -228,7 +230,10 @@ def _synthesize(state: IncidentState) -> IncidentState:
     _start = time.perf_counter()
     try:
         synthesis: SynthesisOutput = invoke_structured(
-            get_chat_model(), SynthesisOutput, _build_synthesis_prompt(findings)
+            get_chat_model(),
+            SynthesisOutput,
+            _build_synthesis_prompt(findings),
+            trace_id=state.get("trace_id"),
         )
         RECORDER.record_agent_call(
             "synthesis",
@@ -340,12 +345,34 @@ def run_incident(samples: dict[Domain, MetricSample], persist: bool = True) -> I
     is not the same concern as incident durability.
     """
     start = time.perf_counter()
-    final_state = _GRAPH.invoke({"samples": samples})
+    trace_id = new_trace_id() if tracing_enabled() else None
+    record_trace_event(
+        trace_id,
+        "incident_started",
+        persist=persist,
+        samples=samples,
+    )
+    try:
+        final_state = _GRAPH.invoke({"samples": samples, "trace_id": trace_id})
+    except Exception as exc:
+        record_trace_event(
+            trace_id,
+            "incident_failed",
+            duration_ms=(time.perf_counter() - start) * 1000,
+            error=exc,
+        )
+        raise
     report = final_state["report"]
     RECORDER.record_incident(
         (time.perf_counter() - start) * 1000, report.routing_decision, report.confidence
     )
     if persist:
         incident_store.save_incident(report)
+    record_trace_event(
+        trace_id,
+        "incident_completed",
+        duration_ms=(time.perf_counter() - start) * 1000,
+        report=report,
+    )
     return report
 

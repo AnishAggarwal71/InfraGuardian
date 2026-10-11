@@ -7,10 +7,19 @@ invalid provider string surfaces a clear error rather than silently falling back
 correctly, an unknown model string prices as free rather than raising).
 """
 
+import json
+
 import pytest
 
 from agents.schemas import SpecialistFinding
-from tools.llm import FakeInfraGuardianModel, get_chat_model, get_last_cost_usd, invoke_structured, _price_usage
+from tools.llm import (
+    FakeInfraGuardianModel,
+    StructuredOutputError,
+    _price_usage,
+    get_chat_model,
+    get_last_cost_usd,
+    invoke_structured,
+)
 
 
 def test_get_chat_model_defaults_to_fake_model_when_env_unset(monkeypatch):
@@ -58,3 +67,33 @@ def test_price_usage_known_model_computes_expected_cost():
 def test_price_usage_unknown_model_prices_as_free():
     cost = _price_usage("some-unlisted-model", {"input_tokens": 1000, "output_tokens": 1000})
     assert cost == 0.0
+
+
+def test_unparsed_provider_response_is_traced_and_raised(monkeypatch, tmp_path):
+    """A provider's ``parsed=None`` response must fail closed and leave a reviewable artifact."""
+
+    class UnparsedRunnable:
+        def invoke(self, _prompt):
+            return {
+                "raw": {"content": "not valid structured output"},
+                "parsed": None,
+                "parsing_error": ValueError("tool arguments were invalid"),
+            }
+
+    class UnparsedModel:
+        model = "test-model"
+
+        def with_structured_output(self, _schema, include_raw=False):
+            assert include_raw is True
+            return UnparsedRunnable()
+
+    monkeypatch.setenv("INFRAGUARDIAN_TRACE_DIR", str(tmp_path))
+
+    with pytest.raises(StructuredOutputError, match="SpecialistFinding structured output was not parsed"):
+        invoke_structured(UnparsedModel(), SpecialistFinding, "test prompt", trace_id="trace-123")
+
+    event = json.loads((tmp_path / "events.jsonl").read_text().strip())
+    assert event["trace_id"] == "trace-123"
+    assert event["success"] is False
+    assert event["parsed_response"] is None
+    assert event["parsing_error"]["type"] == "ValueError"

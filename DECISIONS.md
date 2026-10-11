@@ -650,3 +650,31 @@ requirements.txt` showed only the expected 3-line addition (`psutil==7.2.2` + it
 comment). Manual read-through of the edited Limitations/Architecture/Repository-layout sections
 to confirm no other dangling references remain nearby.
 
+---
+
+## 2026-10-11 — First real-model validation is a separate evidence track from fake-model evaluation
+
+**Decision:** Keep the deterministic fake-model fixture evaluator as the CI/pipeline-regression
+baseline, and record Claude Haiku experiments in `evaluation/REAL_MODEL_VALIDATION.md` with
+opt-in, local JSONL LLM traces. Do not merge a handful of manual real-model results into the
+published fake-model accuracy table.
+
+**Why:** The first three live runs differed from the fake model: GPU ECC was downgraded from
+critical to high and routed to recommendation, replication lag was under-classified, and
+connection-pool exhaustion was conservatively not auto-remediated. Those results reveal product
+and safety gaps, but three manually run cases are not a statistically meaningful model-quality
+claim. The initial provider run also returned `parsed=None`, which previously surfaced as a
+`NoneType` crash with no inspectable evidence. `tools.tracing` now records prompt, raw/parsed
+output, parser errors, usage, latency, and final report only when `INFRAGUARDIAN_TRACE_DIR` is
+set; malformed output now raises into the existing fail-closed path.
+
+**Alternatives considered:** (1) Treat fake fixture results as proof of live-model quality; (2)
+switch the existing evaluator to a paid live model; (3) log every prompt/response by default.
+
+**Why not the alternatives:** (1) would conflate deterministic lookup-table behavior with real
+LLM reasoning. (2) would make CI costly, nondeterministic, and difficult to reproduce. (3)
+would persist potentially sensitive operational telemetry without an explicit operator choice.
+The live ledger is the next required follow-up; the P0 finding is to make safety-critical
+thresholds such as non-zero ECC errors impose a deterministic severity/routing floor before an
+LLM can influence the decision.
+

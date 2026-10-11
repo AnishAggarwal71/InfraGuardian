@@ -33,6 +33,10 @@ def _build_prompt(sample: DBMetrics, detection: DetectionResult) -> str:
     )
 
 
-def diagnose(sample: DBMetrics, detection: DetectionResult) -> SpecialistFinding:
-    """Produce a structured RCA finding for an anomalous DB sample."""
-    return invoke_structured(get_chat_model(), SpecialistFinding, _build_prompt(sample, detection))
+def diagnose(
+    sample: DBMetrics, detection: DetectionResult, trace_id: str | None = None
+) -> SpecialistFinding:
+    """Produce a structured RCA finding for an anomalous DB sample and optional trace run."""
+    return invoke_structured(
+        get_chat_model(), SpecialistFinding, _build_prompt(sample, detection), trace_id=trace_id
+    )

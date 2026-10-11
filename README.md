@@ -189,6 +189,9 @@ gates in action:
 
 ## Evaluation
 
+For observed real-model validation results and the prioritized follow-up plan, see
+[`evaluation/REAL_MODEL_VALIDATION.md`](evaluation/REAL_MODEL_VALIDATION.md).
+
 ```bash
 uv run python -m evaluation.evaluator
 ```
@@ -215,6 +218,25 @@ for the full per-case detail):
 These are measured numbers against this project's own fixtures and the offline fake model, not
 a production claim — real-provider latency/cost and a held-out eval set are the natural next
 step once a model API key is in place.
+
+### Real-model investigation traces
+
+The fixture evaluator intentionally forces the offline fake model. For a manual live-provider
+run, set `INFRAGUARDIAN_TRACE_DIR` to capture a local `events.jsonl` artifact containing the
+incident input, every LLM prompt and raw/parsed response, usage metadata, parser errors,
+latency, and final incident report. The trace never records API keys, but prompts and responses
+can contain operationally sensitive data, so `evaluation/real-runs/` is gitignored by default.
+
+```powershell
+$run = "evaluation/real-runs/haiku-gpu-ecc-$(Get-Date -Format yyyyMMdd-HHmmss)"
+$env:INFRAGUARDIAN_TRACE_DIR = Join-Path $PWD $run
+uv run python -m cli.main analyze gpu_ecc_errors --no-persist --json |
+    Tee-Object (Join-Path $run "report.json")
+```
+
+An unparsed or schema-invalid live-model response is recorded in the trace and represented by
+the orchestrator's fail-closed sentinel finding; it cannot flow downstream as a `None` finding
+or trigger automated remediation.
 
 ## Observability
 

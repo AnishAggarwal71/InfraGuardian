@@ -32,6 +32,10 @@ def _build_prompt(sample: GPUMetrics, detection: DetectionResult) -> str:
     )
 
 
-def diagnose(sample: GPUMetrics, detection: DetectionResult) -> SpecialistFinding:
-    """Produce a structured RCA finding for an anomalous GPU sample."""
-    return invoke_structured(get_chat_model(), SpecialistFinding, _build_prompt(sample, detection))
+def diagnose(
+    sample: GPUMetrics, detection: DetectionResult, trace_id: str | None = None
+) -> SpecialistFinding:
+    """Produce a structured RCA finding for an anomalous GPU sample and optional trace run."""
+    return invoke_structured(
+        get_chat_model(), SpecialistFinding, _build_prompt(sample, detection), trace_id=trace_id
+    )
