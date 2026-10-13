@@ -109,8 +109,12 @@ class PostgresCollector:
         conn = self._get_connection()
         cur = conn.cursor()
 
+        # Count all client backend connections holding a pool slot, not just those actively
+        # running a query — idle connections still consume max_connections slots, which is what
+        # the connection_pool_utilization_pct threshold rule cares about.
         cur.execute(
-            "SELECT count(*) FROM pg_stat_activity WHERE state != 'idle' AND pid != pg_backend_pid()"
+            "SELECT count(*) FROM pg_stat_activity "
+            "WHERE backend_type = 'client backend' AND pid != pg_backend_pid()"
         )
         connections_active = cur.fetchone()[0]
 
