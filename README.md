@@ -13,22 +13,19 @@ failure handling — not "look, a LangGraph demo." Source of truth for requireme
 and `DECISIONS.md` is the full decision log (what we did, why, what we rejected and why) for
 every milestone.
 
-## Live demo
+## Quickstart
+
+This is a CLI + local API, not a hosted web app — there's no UI to click through. Clone it, run
+it locally:
 
 ```bash
-curl -s https://infraguardian.onrender.com/health
-curl -s -X POST https://infraguardian.onrender.com/analyze \
-    -H 'content-type: application/json' -d '{"scenarios": ["gpu_ecc_errors"]}'
+uv sync
+uv run python -m cli.main analyze gpu_ecc_errors
 ```
 
-> Replace with the actual Render URL once deployed — see Deployment below.
-
-This public instance runs the offline `FakeInfraGuardianModel` only, by design: an
-unauthenticated public endpoint with a real paid API key wired in is unbounded cost/abuse
-exposure (there's no auth or rate limiting in this MVP — see Limitations). The architecture
-itself is model-agnostic and has been run against a real Anthropic model locally (see Model-
-agnostic LLM layer and Evaluation below) — the public demo's scope is a deliberate safety
-decision, not a capability limit.
+See CLI and API below for the full command/endpoint surface. A `render.yaml` Blueprint exists
+for deploying the API as a free, unauthenticated, fake-model-only instance (see Deployment) —
+that's an optional deployment path, not the primary way this project is meant to be used.
 
 ## Architecture
 
@@ -207,9 +204,6 @@ gates in action:
 
 ## Evaluation
 
-For observed real-model validation results and the prioritized follow-up plan, see
-[`evaluation/REAL_MODEL_VALIDATION.md`](evaluation/REAL_MODEL_VALIDATION.md).
-
 ```bash
 uv run python -m evaluation.evaluator
 ```
@@ -234,8 +228,34 @@ for the full per-case detail):
 | Latency p50 / p95 | — | ~1ms / ~3ms (fake model; no network) |
 
 These are measured numbers against this project's own fixtures and the offline fake model, not
-a production claim — real-provider latency/cost and a held-out eval set are the natural next
-step once a model API key is in place.
+a production claim — the fixture harness only proves the deterministic pipeline (thresholds,
+routing, calibration) is wired correctly; it says nothing about real LLM reasoning quality. See
+below for that.
+
+### Real-model results (Claude Haiku, 3 scenarios)
+
+The 104-case harness above is intentionally fake-model-only (deterministic, free, no API key for
+CI). To get an honest read on real reasoning quality, 3 scenarios were separately run against
+Claude Haiku with a real API key. Full methodology, traces, and follow-ups:
+[`evaluation/REAL_MODEL_VALIDATION.md`](evaluation/REAL_MODEL_VALIDATION.md).
+
+| Scenario | Fake-model expected | Claude Haiku result | Outcome |
+|---|---|---|---|
+| `gpu_ecc_errors` | `critical` / `escalate` | `high` / `recommend` | **Fail** — model downgraded a critical hardware fault |
+| `db_replication_lag` | `high` / `recommend` | `medium` / `recommend` | Routing safe, severity under-classified |
+| `db_connection_pool_exhaustion` | `high` / `auto_remediate` | `high` / `recommend` | Safe divergence — model declined automation given only one sample |
+
+1 of 3 cases matched fake-model routing exactly; 0 false auto-remediations across all 3. This is
+a small manual spot-check, not a statistically meaningful accuracy claim — publishing it ugly
+rather than rounding it up is the point. The `gpu_ecc_errors` failure is the one that mattered: a
+real model silently downgrading a zero-tolerance hardware fault below the escalation threshold
+is exactly the failure mode this project's safety invariants exist to catch. It's now closed by a
+deterministic severity floor (`tools/severity.py::severity_floor()`, applied in
+`orchestrator._synthesize()`) that forces `ecc_errors > 0` to `CRITICAL` regardless of what the
+model returns, backed by 11 regression tests (`tests/test_severity_floor.py`) — the model can no
+longer soften that specific signal, by construction, not by a prompt instruction it could ignore.
+The other two findings (severity drift to `medium`, and the model being more conservative than
+the fake baseline about automation safety) remain open P1 items — see the validation doc.
 
 ### Real-model investigation traces
 
@@ -292,14 +312,16 @@ docker compose up --build
 - Out of scope at this MVP stage, same as the rest of the project: no auth in front of the API,
   no TLS termination, no Postgres/multi-replica story, no PagerDuty/Slack integration.
 
-**Public demo (Render):** `render.yaml` is a Render Blueprint — connect this GitHub repo on
-Render, it detects the file and deploys the existing `Dockerfile` as a free web service with
-`GET /health` as the health check. The Dockerfile's `CMD` uses shell form
+**Optional public deploy (Render):** `render.yaml` is a Render Blueprint — connect this GitHub
+repo on Render, it detects the file and deploys the existing `Dockerfile` as a free web service
+with `GET /health` as the health check. The Dockerfile's `CMD` uses shell form
 (`--port ${PORT:-8000}`) specifically so it honors Render's injected `$PORT` while still
 defaulting to 8000 for local `docker run`/`docker compose up` — an exec-form `CMD` with a
 literal port wouldn't expand a shell variable. `render.yaml` deliberately sets no
-`ANTHROPIC_API_KEY` — the public deploy always runs the offline fake model (see Live demo
-above).
+`ANTHROPIC_API_KEY` — a deploy from this Blueprint always runs the offline fake model, since an
+unauthenticated public `POST /analyze` with a real paid key wired in is unbounded cost/abuse
+exposure (there's no auth or rate limiting in this MVP — see Limitations). This isn't currently
+deployed anywhere; this project is meant to be run locally (see Quickstart above).
 
 ## Tests
 
@@ -333,9 +355,10 @@ against the fake model — no network or API key required for CI.
   domain, so auto-executing one domain's fix while leaving a corroborated second domain
   unaddressed is a scope mismatch this MVP doesn't attempt to solve.
 - The 104-case harness above is fake-model-only by design (deterministic, free, no API key
-  needed for CI). Real-provider behavior is proven by running `analyze`/`live`/`watch` locally
-  with a real `ANTHROPIC_API_KEY` or `GOOGLE_API_KEY` configured — that's a manual spot check,
-  not a held-out eval set, and no aggregate real-model accuracy numbers are published here.
+  needed for CI). A separate 3-scenario spot-check against Claude Haiku is published in the
+  Evaluation section above — a manual sample, not a held-out eval set, and the numbers there are
+  intentionally not rounded up to look better than they are (1 of 3 cases matched the fake-model
+  routing expectation).
 - The pricing table backing `cost_per_incident_usd` covers a handful of model strings; an
   unlisted model prices at `$0.00` rather than erroring (see Observability above).
 - The real collector (`PsutilCollector`) covers CPU/mem; `PostgresCollector` covers DB. GPU

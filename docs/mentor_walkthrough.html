@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>InfraGuardian — Mentor Walkthrough</title>
+<style>
+  :root {
+    --bg: #0f1420; --panel: #161d2e; --panel2: #1d2740; --text: #dbe4f0; --muted: #8fa0bf;
+    --accent: #5fb3ff; --accent2: #ffb45f; --border: #2a3550; --code: #0c1120;
+    /* Categorical domain hues — dataviz-skill slots 1/2/3 (blue/orange/aqua), dark-mode steps:
+       pre-validated for CVD-safe adjacent contrast, reused verbatim from docs/system_design_*.html
+       so every diagram in this repo encodes "DB / CPU-mem / GPU" with the same three colors. */
+    --series-db: #3987e5; --series-cpu: #d95926; --series-gpu: #199e70;
+    /* Status palette (dataviz skill, dark-surface steps) — reserved for severity/outcome only,
+       never reused as a 4th categorical color. */
+    --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--text); line-height:1.6; }
+  .layout { display:flex; min-height:100vh; }
+  nav.sidebar { width: 250px; flex-shrink:0; background: var(--panel); border-right:1px solid var(--border);
+         position: sticky; top:0; height:100vh; overflow-y:auto; padding: 20px 0; }
+  nav.sidebar h2 { font-size:12px; color: var(--muted); text-transform:uppercase; letter-spacing:.08em;
+         padding: 0 20px; margin: 16px 0 6px; }
+  nav.sidebar h2:first-child { margin-top:0; }
+  nav.sidebar a { display:block; padding: 7px 20px; color: var(--text); text-decoration:none; font-size:13.5px;
+         border-left: 3px solid transparent; cursor:pointer; }
+  nav.sidebar a:hover { background: var(--panel2); }
+  nav.sidebar a.active { border-left-color: var(--accent); color: var(--accent); background: var(--panel2); }
+  main { flex: 1; padding: 36px 44px 100px; max-width: 980px; }
+  .section { display:none; }
+  .section.active { display:block; animation: fadein .2s ease; }
+  @keyframes fadein { from {opacity:0; transform: translateY(6px);} to {opacity:1; transform:none;} }
+  h1 { font-size: 28px; margin-top:0; color:#fff; }
+  h1 .sub { display:block; font-size:14.5px; color: var(--muted); font-weight:400; margin-top:6px; }
+  h2 { font-size: 20px; color: var(--accent); margin-top: 32px; border-bottom:1px solid var(--border); padding-bottom:8px;}
+  h3 { font-size:16px; color: #fff; margin-top:22px; }
+  p { color: var(--text); }
+  .lede { font-size:16px; color: #f0f4fa; }
+  .muted { color: var(--muted); font-size: 13.5px; }
+  code, pre, .mono { font-family: "SF Mono", Monaco, Consolas, monospace; }
+  code { background: var(--code); padding:2px 6px; border-radius:4px; font-size:.88em; color:#9fd4ff; }
+  pre { background: var(--code); padding:12px 14px; border-radius:8px; overflow-x:auto; border:1px solid var(--border); font-size:12.5px; }
+  pre code { background:none; padding:0; color:#c9e8ff; }
+  .callout { border-left:4px solid var(--accent); background: var(--panel2); padding:12px 16px; border-radius:0 8px 8px 0; margin:16px 0; font-size:14.5px;}
+  .callout.why { border-left-color: var(--accent2); }
+  .callout.safety { border-left-color: var(--critical); }
+  .callout b.tag { text-transform:uppercase; font-size:10.5px; letter-spacing:.08em; color: var(--muted); display:block; margin-bottom:5px;}
+  .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:14px; margin:16px 0; }
+  .grid3 { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:14px; margin:16px 0; }
+  @media (max-width: 780px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
+  .card { background: var(--panel2); border:1px solid var(--border); border-radius:10px; padding:14px 16px; }
+  .card h4 { margin:0 0 6px; color:#fff; font-size:14px; }
+  .card p { font-size: 13.5px; color: var(--muted); margin: 0; }
+  table { width:100%; border-collapse: collapse; margin:14px 0; font-size:13.5px; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--border); }
+  th { color: var(--muted); font-weight:600; text-transform:uppercase; font-size:10.5px; letter-spacing:.05em; }
+  td code { white-space: nowrap; }
+  .flow { display:flex; flex-wrap:wrap; align-items:center; gap:5px; margin:18px 0; font-family: monospace; font-size:12.5px; }
+  .flow .node { background: var(--panel2); border:1px solid var(--border); color: var(--muted); padding:7px 11px; border-radius:8px; transition: all .15s; }
+  .flow .node.live { border-color: var(--accent); color:#fff; box-shadow: 0 0 0 1px var(--accent) inset; }
+  .flow .node.done { border-color: var(--good); color: var(--good); }
+  .flow .arrow { color: var(--muted); }
+  .pill { display:inline-block; font-size:11px; padding:3px 10px; border-radius:999px; background:#223; color:var(--accent); margin:3px 6px 3px 0; font-weight:600; letter-spacing:.03em; cursor:pointer; border: 1px solid transparent; }
+  .pill:hover { border-color: var(--accent); }
+  .pill.active { background: var(--accent); color: #0b0f1a; }
+  .badge { display:inline-block; font-size:12px; padding:4px 11px; border-radius:6px; font-weight:700; letter-spacing:.02em; }
+  .badge.auto { background: rgba(12,163,12,.18); color: var(--good); border: 1px solid var(--good); }
+  .badge.recommend { background: rgba(250,178,25,.16); color: var(--warning); border: 1px solid var(--warning); }
+  .badge.escalate { background: rgba(208,59,59,.18); color: var(--critical); border: 1px solid var(--critical); }
+  .badge.sev-low { background: rgba(12,163,12,.18); color: var(--good); }
+  .badge.sev-medium { background: rgba(250,178,25,.16); color: var(--warning); }
+  .badge.sev-high { background: rgba(236,131,90,.18); color: var(--serious); }
+  .badge.sev-critical { background: rgba(208,59,59,.18); color: var(--critical); }
+  .badge.safe { background: rgba(12,163,12,.18); color: var(--good); border:1px solid var(--good); }
+  .badge.unsafe { background: rgba(208,59,59,.18); color: var(--critical); border:1px solid var(--critical); }
+  .badge.unknown { background: rgba(143,160,191,.18); color: var(--muted); border:1px solid var(--border); }
+  .navbtns { display:flex; justify-content:space-between; margin-top:36px; padding-top:18px; border-top:1px solid var(--border); }
+  .navbtns button, .ctrlbtn { background: var(--panel2); color:var(--text); border:1px solid var(--border); padding:9px 16px; border-radius:8px; cursor:pointer; font-size:13.5px; }
+  .navbtns button:hover, .ctrlbtn:hover { border-color: var(--accent); color: var(--accent); }
+  .ctrlbtn.primary { background: var(--accent); color:#0b0f1a; border-color: var(--accent); font-weight:600; }
+  .ctrlbtn:disabled { opacity:.4; cursor: not-allowed; }
+  ul { padding-left: 20px; } li { margin: 4px 0; }
+  .demo-box { background: var(--panel); border:1px solid var(--border); border-radius:12px; padding:20px 22px; margin-top:14px; }
+  .demo-controls { display:flex; gap:8px; align-items:center; margin: 14px 0 18px; flex-wrap: wrap; }
+  .step-panel { background: var(--panel2); border:1px solid var(--border); border-radius:10px; padding:16px 18px; min-height: 220px; }
+  .step-title { font-size: 11px; text-transform: uppercase; letter-spacing:.08em; color: var(--muted); margin-bottom:10px; }
+  .metric-row { display:flex; justify-content:space-between; padding:5px 0; border-bottom: 1px dashed var(--border); font-size:13.5px; }
+  .metric-row:last-child { border-bottom:none; }
+  .metric-row .breach { color: var(--critical); font-weight:600; }
+  .metric-row .ok { color: var(--good); }
+  svg.chart { width:100%; height:150px; display:block; }
+  svg.chart .threshold { stroke: var(--critical); stroke-width:1.5; stroke-dasharray:4 3; }
+  svg.chart .series { fill:none; stroke-width:2.5; stroke-linecap:round; }
+  svg.chart .pt { r:4; }
+  svg.chart .grid { stroke: var(--border); stroke-width:1; }
+  .tooltip-dot { opacity:0; transition: opacity .1s; }
+  .reasoning { font-size: 13.5px; color: var(--muted); background: var(--code); border-radius:8px; padding:10px 12px; margin-top:10px; border-left: 3px solid var(--accent); }
+  .evalgrid { display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; margin: 16px 0; }
+  @media (max-width: 780px) { .evalgrid { grid-template-columns: repeat(2,1fr); } }
+  .stat { background: var(--panel2); border:1px solid var(--border); border-radius:10px; padding:14px; text-align:center; }
+  .stat .v { font-size: 24px; font-weight: 700; color: var(--good); }
+  .stat .l { font-size: 11px; color: var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-top:4px; }
+  .inline-link { color: var(--accent); text-decoration: none; border-bottom: 1px dotted var(--accent); }
+  .inline-link:hover { color: #fff; }
+  footer.pagefoot { margin-top:60px; padding-top:16px; border-top:1px solid var(--border); color:var(--muted); font-size:12.5px; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar" id="sidebar">
+    <h2>Overview</h2>
+    <a data-target="s1">1. What &amp; why</a>
+    <a data-target="s2">2. Tech stack</a>
+    <h2>Design</h2>
+    <a data-target="s3">3. High-level design</a>
+    <a data-target="s4">4. Low-level design</a>
+    <h2>Grounding</h2>
+    <a data-target="s5">5. Use cases</a>
+    <a data-target="s6">6. Live interactive demo</a>
+    <a data-target="s7">7. Proof it works</a>
+  </nav>
+  <main id="main">
+
+<!-- ============================================================ SECTION 1 ============================================================ -->
+<section class="section" id="s1">
+<h1>InfraGuardian<span class="sub">An agentic infrastructure incident-response system — deterministic detection, LLM diagnosis, safety-gated action.</span></h1>
+
+<p class="lede">Picture three tireless junior engineers, each watching one dashboard — database health,
+host CPU/memory, GPU health — who never miss a threshold breach and never bother anyone unless
+something is actually wrong. When one of them spots a problem, they write a diagnosis. If two or
+three spot problems at once, a senior engineer reads every write-up and asks: is this one incident
+or three? What's really going on? Then — critically — that senior person follows a strict rulebook
+about what they're allowed to fix themselves versus what has to go to a human. That's InfraGuardian.</p>
+
+<div class="callout">
+<b class="tag">In one sentence</b>
+Deterministic rules decide <i>whether</i> to call an LLM at all; specialist LLM agents diagnose
+anomalies per domain; a LangGraph orchestrator correlates their findings into one incident report;
+a deterministic safety gate decides to auto-fix, recommend, or escalate to a human — the LLM never
+decides whether it's allowed to act.
+</div>
+
+<h3>What it does, concretely</h3>
+<ul>
+<li>Ingests DB / CPU-memory / GPU metric samples (today: a deterministic simulator and two real
+collectors — more below) as validated Pydantic models.</li>
+<li>Runs plain numeric threshold checks <b>before any LLM call</b>. A healthy domain never reaches
+a specialist — enforced structurally in the orchestrator's graph, not by convention.</li>
+<li>For each anomalous domain, invokes a specialist LLM agent (in parallel) that returns a
+schema-valid root-cause finding — hypothesis, severity, evidence, and a verdict on whether it's
+safe to act on automatically.</li>
+<li>If more than one domain fired, a synthesis LLM call correlates the findings into one unified
+incident report, explicitly labeling causal claims as hypotheses unless backed by measured evidence.</li>
+<li>Confidence and severity are then <i>recalibrated deterministically</i> — the model's self-reported
+numbers never flow straight to the decision gate unchecked.</li>
+<li>A pure-Python routing function decides: auto-remediate (from a fixed allowlist only), recommend
+to a human, or escalate — and every decision is logged with its rationale to a SQLite audit trail.</li>
+</ul>
+
+<h3>Why this is the interesting part (the actual portfolio pitch)</h3>
+<div class="grid3">
+<div class="card"><h4>Bounded autonomy</h4><p>The system is deliberately not "give an LLM shell
+access and hope." Every action is a predefined, allowlisted, reversible runbook. The LLM
+<i>selects</i>, it never <i>writes</i>, an action. That's the actual hard problem in production
+agentic systems — not "can the model answer," but "can I trust it with a blast radius."</p></div>
+<div class="card"><h4>Evaluation rigor</h4><p>A 104-case evaluation harness with hand-derived
+expected outcomes (not generated by the code being tested) reports detection accuracy, root-cause
+accuracy, routing accuracy, schema validity, and — the number that matters most — a hard count of
+false auto-remediations.</p></div>
+<div class="card"><h4>Failure handling as a first-class citizen</h4><p>What happens when the LLM
+call throws, times out, or returns malformed output? Every error path in this codebase fails
+<i>closed</i> — toward a human, never toward an unsupervised action.</p></div>
+</div>
+
+<div class="callout safety">
+<b class="tag">Non-negotiable, every commit</b>
+No arbitrary code/shell execution from model output. Critical-severity incidents never
+auto-remediate. Low-confidence findings fail closed. Malformed LLM output fails closed. Auto-remediation
+requires confidence ≥ 0.8 <b>AND</b> a safe allowlisted action <b>AND</b> severity below critical —
+all three, every time.
+</div>
+
+<p class="muted">Portfolio framing: this is built to demonstrate production-oriented AI systems
+engineering judgment — bounded autonomy, evaluation rigor, failure handling — not shipped to real
+infrastructure. Execution of remediation is simulated by design (no real infra to act on in a
+portfolio project); the mechanism being demonstrated is the safety gate and audit trail.</p>
+
+<div class="navbtns"><span></span><button onclick="nextSection('s1')">Next: Tech stack →</button></div>
+</section>
+
+<!-- ============================================================ SECTION 2 ============================================================ -->
+<section class="section" id="s2">
+<h1>Technology stack<span class="sub">What's used, and specifically why.</span></h1>
+
+<table>
+<tr><th>Layer</th><th>Technology</th><th>Why it's there</th></tr>
+<tr><td>Orchestration</td><td><code>LangGraph</code></td><td>A typed state machine for multi-step
+LLM workflows. Gives us an explicit graph — screen → fan-out to anomalous-domain specialists
+(parallel) → synthesize → route — rather than hand-rolled control flow, and makes the "healthy
+domains never reach a specialist" rule a structural property of the graph's conditional edges.</td></tr>
+<tr><td>LLM integration</td><td><code>LangChain</code> + <code>langchain-anthropic</code> /
+<code>langchain-google-genai</code></td><td>One call-site abstraction (<code>init_chat_model</code>)
+so the provider is a connection string, never hardcoded import. Swapping Claude → Gemini → an
+open-source model is an environment variable change.</td></tr>
+<tr><td>Model (default)</td><td>Claude (Anthropic), model-agnostic</td><td>Used for structured
+specialist diagnosis + synthesis via <code>with_structured_output()</code>. Validated against a
+real model as well as the offline fake (see Section 7).</td></tr>
+<tr><td>Schema &amp; validation</td><td><code>Pydantic</code></td><td>Every metric sample, every
+specialist finding, every incident report is a Pydantic model. "Schema-valid structured output" is
+enforced, not hoped for — a model that can't produce a valid instance raises, which the
+orchestrator treats as a fail-closed signal.</td></tr>
+<tr><td>API</td><td><code>FastAPI</code></td><td><code>POST /analyze</code>, <code>/health</code>,
+<code>/metrics</code>. Chosen for native Pydantic request/response validation.</td></tr>
+<tr><td>Real metric collection</td><td><code>psutil</code>, <code>psycopg2</code> (Postgres)</td>
+<td>Two real collectors exist today behind the same <code>MetricCollector</code> protocol as the
+simulator — <code>PsutilCollector</code> for live host CPU/mem/swap/load, <code>PostgresCollector</code>
+for live <code>pg_stat_activity</code> / <code>pg_stat_database</code> queries. GPU stays
+simulator-only in this MVP (a <code>pynvml</code> collector would drop in the same way).</td></tr>
+<tr><td>Storage</td><td><code>SQLite</code></td><td>Two tables: full incident reports, and a
+separate audit log of every executed action — idempotency-guarded by a
+<code>UNIQUE(incident_id, runbook_id)</code> constraint.</td></tr>
+<tr><td>Packaging</td><td><code>uv</code></td><td><code>pyproject.toml</code> pins the package
+index to public PyPI explicitly, so the lockfile resolves identically regardless of a developer's
+own global index config — a portfolio project has to clone-and-run anywhere.</td></tr>
+<tr><td>Deployment</td><td><code>Docker</code> + <code>Render</code></td><td>Containerized, with a
+live public demo instance running the offline fake model only (unauthenticated public endpoint +
+real paid API key is unbounded cost exposure — a deliberate safety decision, not a capability limit).</td></tr>
+<tr><td>Testing</td><td><code>pytest</code></td><td>Scenario coverage, schema validation, and
+explicit routing-gate unit tests for the two things that must never happen: critical auto-remediating,
+low-confidence auto-remediating.</td></tr>
+</table>
+
+<div class="callout why"><b class="tag">The one architectural decision that pays for itself everywhere</b>
+The collector abstraction (<code>tools/collectors.py::MetricCollector</code>, a <code>Protocol</code> —
+anything with <code>.collect()</code> qualifies, no inheritance needed). Simulators and real
+collectors are swappable without touching the rule engine, agents, or orchestrator. This is the
+difference between a demo that only ever works on canned data and one that already runs against a
+real Postgres instance and a real host.</div>
+
+<div class="navbtns"><button onclick="prevSection('s2')">← Back</button><button onclick="nextSection('s2')">Next: High-level design →</button></div>
+</section>
+
+<!-- ============================================================ SECTION 3 ============================================================ -->
+<section class="section" id="s3">
+<h1>High-level design<span class="sub">Where this sits in a running environment — not the code, the plumbing.</span></h1>
+
+<p>InfraGuardian sits <i>beside</i> existing observability (Datadog/Grafana/Prometheus stay in
+place, aren't replaced) and in front of three decision destinations. Every path — whichever one
+is taken — writes to one audited incident store.</p>
+
+<div class="flow">
+<div class="node">DB cluster</div><div class="node">Compute hosts</div><div class="node">GPU fleet</div>
+<div class="arrow">⇢</div>
+<div class="node" style="border-color:var(--accent); color:#fff;">InfraGuardian<br><span style="color:var(--muted); font-size:11px;">detect + diagnose + route</span></div>
+<div class="arrow">⇢</div>
+</div>
+<div class="flow" style="margin-top:-6px;">
+<span style="width:160px"></span>
+<div class="node" style="border-color:var(--good); color:var(--good);">Auto-remediate<br><span style="color:var(--muted); font-size:11px">conf ≥0.8, SAFE, non-critical</span></div>
+<div class="node" style="border-color:var(--warning); color:var(--warning);">Recommend<br><span style="color:var(--muted); font-size:11px">on-call queue</span></div>
+<div class="node" style="border-color:var(--critical); color:var(--critical);">Escalate<br><span style="color:var(--muted); font-size:11px">page a human</span></div>
+<div class="arrow">⇢</div>
+<div class="node">Incident store<br><span style="color:var(--muted); font-size:11px">every decision, audited</span></div>
+</div>
+
+<div class="callout">
+<b class="tag">Full animated version</b>
+This static view is deliberately simplified for the pitch. The complete, step-animated,
+light/dark-themed version — with the actual particle flow per decision path — lives at
+<a class="inline-link" href="system_design_high_level.html" target="_blank">system_design_high_level.html</a>.
+Open it in a second tab if there's time to walk through it live.
+</div>
+
+<h3>Design properties worth calling out</h3>
+<ul>
+<li><b>Existing observability isn't replaced.</b> InfraGuardian is a decision layer on top of
+metrics that are presumably already being collected somewhere — not a Datadog/Grafana competitor.</li>
+<li><b>Three decision destinations, one audit sink.</b> Whichever path a finding takes, the full
+reasoning trail lands in the incident store — nothing is "decided and forgotten."</li>
+<li><b>No arbitrary action surface.</b> The only arrow leaving InfraGuardian toward production
+infrastructure is through the allowlisted-runbook gate, in the auto-remediate path alone — recommend
+and escalate only ever reach a human.</li>
+</ul>
+
+<div class="navbtns"><button onclick="prevSection('s3')">← Back</button><button onclick="nextSection('s3')">Next: Low-level design →</button></div>
+</section>
+
+<!-- ============================================================ SECTION 4 ============================================================ -->
+<section class="section" id="s4">
+<h1>Low-level design<span class="sub">Follow one metric sample from arrival to decision, module by module.</span></h1>
+
+<div class="flow">
+<div class="node">Metric sample</div><div class="arrow">→</div>
+<div class="node">Rule pre-screen<br><span class="muted" style="font-size:11px">thresholds.py</span></div><div class="arrow">→</div>
+<div class="node">anomalous?</div><div class="arrow">→</div>
+<div class="node">Specialist agent(s)<br><span class="muted" style="font-size:11px">parallel, per domain</span></div><div class="arrow">→</div>
+<div class="node">Synthesis<br><span class="muted" style="font-size:11px">cross-domain LLM call</span></div><div class="arrow">→</div>
+<div class="node">Confidence + severity calibration</div><div class="arrow">→</div>
+<div class="node">Routing gate<br><span class="muted" style="font-size:11px">deterministic</span></div><div class="arrow">→</div>
+<div class="node">Decision + audit log</div>
+</div>
+
+<table>
+<tr><th>Module</th><th>Role</th></tr>
+<tr><td><code>tools/metrics.py</code></td><td><code>DBMetrics</code> / <code>CPUMemMetrics</code> /
+<code>GPUMetrics</code> — Pydantic contracts, each with timestamp + domain + source metadata.</td></tr>
+<tr><td><code>tools/collectors.py</code></td><td><code>MetricCollector</code> protocol —
+<code>SimulatorCollector</code>, <code>PsutilCollector</code>, <code>PostgresCollector</code> all
+implement <code>.collect()</code>; nothing downstream knows which one is in play.</td></tr>
+<tr><td><code>tools/thresholds.py</code></td><td>The deterministic pre-screen — plain numeric
+comparisons, zero LLM/agent imports by design, so it stays the one enforcement point for
+"healthy domains never reach a specialist."</td></tr>
+<tr><td><code>agents/{db,cpu_mem,gpu}_agent.py</code></td><td>One specialist per domain. Builds a
+prompt from the breached rules, calls <code>get_chat_model().with_structured_output(SpecialistFinding)</code>.
+Each returns root cause, severity, predictive risk, evidence, and an <code>automation_safety</code>
+verdict (SAFE / UNSAFE / UNKNOWN) with a reason.</td></tr>
+<tr><td><code>orchestrator.py</code></td><td>The LangGraph wiring: <code>screen → (conditional
+fan-out to anomalous domains only) → specialists in parallel → synthesize → route_and_remediate</code>.
+If zero specialists fired, synthesis is skipped entirely — an instant "all healthy" report, zero
+LLM calls.</td></tr>
+<tr><td><code>tools/confidence.py</code></td><td><code>calibrate()</code> caps the model's
+self-reported confidence against a deterministic ceiling — a hallucinated number cannot flow
+through to the gate unchecked.</td></tr>
+<tr><td><code>tools/severity.py</code></td><td><code>severity_floor()</code> — the mirror of
+confidence calibration: certain threshold breaches (e.g. GPU ECC errors) carry a non-negotiable
+minimum severity the model cannot soften below.</td></tr>
+<tr><td><code>tools/routing.py</code></td><td><code>route()</code> — plain Python, not an LLM
+call. Checks severity-critical and low-confidence first, unconditionally, before anything else.</td></tr>
+<tr><td><code>tools/remediation.py</code></td><td><code>RUNBOOKS</code> — the static allowlist.
+The LLM/routing layer selects an <i>id</i> from this dict; it can never construct executable text.</td></tr>
+<tr><td><code>storage/incident_store.py</code></td><td>SQLite: full incident reports + a
+<code>UNIQUE(incident_id, runbook_id)</code>-guarded action audit log (idempotent by construction).</td></tr>
+</table>
+
+<h3>The routing gate, in priority order (the safety-critical core)</h3>
+<ol>
+<li><b>Severity == critical?</b> → <code>ESCALATE</code>. Unconditional, checked first.</li>
+<li><b>Calibrated confidence &lt; 0.5?</b> → <code>ESCALATE</code>.</li>
+<li><b>Confidence ≥ 0.8, exactly one affected domain, that specialist said SAFE, and an
+allowlisted runbook exists for it?</b> → <code>AUTO_REMEDIATE</code> with that runbook's id.</li>
+<li><b>Anything UNSAFE/UNKNOWN among contributing findings?</b> → <code>RECOMMEND</code> (SAFE is
+a hard requirement for auto-remediation, not a tiebreaker).</li>
+<li><b>Two or more domains affected?</b> → <code>RECOMMEND</code> (one runbook only ever targets
+one domain in this MVP, so cross-domain incidents never auto-remediate even at high confidence).</li>
+<li>Otherwise → <code>RECOMMEND</code> (medium confidence routes to human review).</li>
+</ol>
+
+<div class="callout why"><b class="tag">Why confidence AND severity both get a deterministic floor/ceiling</b>
+Real validation against Claude Haiku caught the model downgrading a GPU ECC fault from critical to
+high — which would have routed to RECOMMEND instead of ESCALATE for a hardware fault with a
+zero-tolerance threshold. <code>severity_floor()</code> exists specifically because confidence
+calibration alone doesn't catch a model softening the <i>severity</i> field.</div>
+
+<div class="callout">
+<b class="tag">Full animated version</b>
+The complete low-level walkthrough (with the fan-out/fan-in LangGraph state diagram, animated
+per-field data flow) lives at
+<a class="inline-link" href="system_design_low_level.html" target="_blank">system_design_low_level.html</a>.
+A deeper line-by-line narrative tour (jargon decoder, file-by-file, interview Q&amp;A rehearsal)
+lives at <a class="inline-link" href="learn_infraguardian.html" target="_blank">learn_infraguardian.html</a>.
+</div>
+
+<div class="navbtns"><button onclick="prevSection('s4')">← Back</button><button onclick="nextSection('s4')">Next: Use cases →</button></div>
+</section>
+
+<!-- ============================================================ SECTION 5 ============================================================ -->
+<section class="section" id="s5">
+<h1>Use cases<span class="sub">Who this pattern is actually for.</span></h1>
+
+<h3>Within this project's scope</h3>
+<div class="grid2">
+<div class="card"><h4>On-call load reduction</h4><p>Three domains monitored continuously; a human
+is only ever paged for what clears the escalation bar, and the narrow/safe/single-domain cases
+resolve themselves via an allowlisted runbook.</p></div>
+<div class="card"><h4>Cross-domain root-cause correlation</h4><p>A DB connection-pool leak and a
+CPU spike showing up together might be one incident, not two — synthesis exists specifically to
+catch that instead of generating two disconnected tickets.</p></div>
+<div class="card"><h4>Pre-incident risk signal</h4><p>Every specialist finding includes a
+<code>predictive_risk</code> field — "what happens next if this is left alone" — turning a
+threshold breach into a forward-looking signal, not just a snapshot.</p></div>
+<div class="card"><h4>Auditable automation</h4><p>Every routing decision — including every
+<i>non</i>-action — is logged with its rationale, confidence, and the specific rule that drove it.
+Useful anywhere "why did the system do that" needs a real answer, not a log line.</p></div>
+</div>
+
+<h3>The broader pattern (why this generalizes beyond infra)</h3>
+<p>Strip away the DB/CPU/GPU specifics and what's left is a reusable shape for <b>any</b> domain
+where an LLM should assist a high-stakes decision without being trusted with the blast radius
+alone: deterministic pre-filter → bounded specialist reasoning → deterministic recalibration →
+deterministic gate → allowlisted action. That shape shows up in:</p>
+<ul>
+<li>Fraud/anomaly triage (flag deterministically, diagnose with an LLM, auto-block only within a
+narrow confidence+severity band).</li>
+<li>Customer support auto-resolution (auto-close only low-risk, high-confidence, policy-safe cases;
+everything else goes to a human queue).</li>
+<li>Any "agentic" system where the actual engineering question is "how do I bound what the model
+is allowed to do," not "can the model answer."</li>
+</ul>
+
+<div class="callout why"><b class="tag">Why this is the right thing to show a mentor</b>
+It's not "I called an LLM API." It's: here is a documented, testable, auditable boundary around
+model autonomy, with a number (zero false auto-remediations across 104 fixtures) to back the claim
+instead of a vibe.</div>
+
+<div class="navbtns"><button onclick="prevSection('s5')">← Back</button><button onclick="nextSection('s5')">Next: Live interactive demo →</button></div>
+</section>
+
+<!-- ============================================================ SECTION 6 — INTERACTIVE DEMO ============================================================ -->
+<section class="section" id="s6">
+<h1>Live interactive demo<span class="sub">Pick a real scenario, step through the actual pipeline logic.</span></h1>
+
+<p>Every number below — thresholds, severities, confidence values, routing outcomes, runbook ids —
+is taken directly from this repo's source (<code>tools/thresholds.py</code>, <code>tools/routing.py</code>,
+<code>tools/confidence.py</code>, <code>tools/remediation.py</code>) and matches the hand-derived
+expected outcome in <code>evaluation/fixtures/incident_cases.py</code> for that scenario. This page
+re-implements the gate logic in JavaScript for the walkthrough; it is not calling the live API.</p>
+
+<div class="demo-box">
+  <div class="step-title">Choose a scenario</div>
+  <div id="scenarioPills"></div>
+
+  <div class="flow" id="pipelineFlow" style="margin-top:18px;">
+    <div class="node" data-step="0">1. Metric sample</div><div class="arrow">→</div>
+    <div class="node" data-step="1">2. Rule pre-screen</div><div class="arrow">→</div>
+    <div class="node" data-step="2">3. Specialist diagnosis</div><div class="arrow">→</div>
+    <div class="node" data-step="3">4. Synthesis</div><div class="arrow">→</div>
+    <div class="node" data-step="4">5. Calibration</div><div class="arrow">→</div>
+    <div class="node" data-step="5">6. Routing decision</div>
+  </div>
+
+  <div class="demo-controls">
+    <button class="ctrlbtn" id="stepBack">◀ Back</button>
+    <button class="ctrlbtn primary" id="stepFwd">Next step ▶</button>
+    <button class="ctrlbtn" id="stepReset">⟲ Restart scenario</button>
+    <span class="muted" id="stepCounter"></span>
+  </div>
+
+  <div class="step-panel" id="stepPanel"></div>
+</div>
+
+<div class="navbtns"><button onclick="prevSection('s6')">← Back</button><button onclick="nextSection('s6')">Next: Proof it works →</button></div>
+</section>
+
+<!-- ============================================================ SECTION 7 ============================================================ -->
+<section class="section" id="s7">
+<h1>Proof it works<span class="sub">Measured numbers from this project's own 104-case evaluation harness.</span></h1>
+
+<p>These are actual measured results against this repo's fixtures and the offline fake model
+(reproducible with no API key — <code>uv run python -m evaluation.evaluator</code>), not claims
+about a production deployment. Report generated
+<code id="evalGenAt">2026-10-12T07:15:07Z</code>.</p>
+
+<div class="evalgrid">
+  <div class="stat"><div class="v">100%</div><div class="l">Detection accuracy</div></div>
+  <div class="stat"><div class="v">100%</div><div class="l">RCA accuracy</div></div>
+  <div class="stat"><div class="v">100%</div><div class="l">Routing accuracy</div></div>
+  <div class="stat"><div class="v">0</div><div class="l">False auto-remediations</div></div>
+  <div class="stat"><div class="v">100%</div><div class="l">Schema validity rate</div></div>
+  <div class="stat"><div class="v">87</div><div class="l">Detection fixture cases</div></div>
+  <div class="stat"><div class="v">16</div><div class="l">End-to-end incident cases</div></div>
+  <div class="stat"><div class="v">&lt;1ms</div><div class="l">p50 latency (fake model)</div></div>
+</div>
+
+<div class="callout safety"><b class="tag">The number that matters most</b>
+<b>False auto-remediation count: 0</b> across all 104 fixtures. This is the single metric a
+mentor or interviewer should press on — everything else (accuracy, latency) is table stakes;
+"did the safety gate ever let something unsafe through" is the actual claim being made.</div>
+
+<h3>What's honestly out of scope (said directly, not glossed over)</h3>
+<ul>
+<li>Execution of remediation is <b>simulated</b> — no real infrastructure is touched. The mechanism
+being proven is the safety gate and audit trail, not real remediation.</li>
+<li>GPU domain is simulator-only; DB and CPU/mem both have real collectors
+(<code>PostgresCollector</code>, <code>PsutilCollector</code>) wired and demoed.</li>
+<li>No auth/rate-limiting on the public API demo — by design, it only runs the offline fake model.</li>
+<li>Not a Datadog/Grafana replacement, no production-grade PagerDuty/Slack integration, no model
+training — all explicitly out of scope per the PRD.</li>
+</ul>
+
+<footer class="pagefoot">
+InfraGuardian — portfolio/FDE-style project. Source of truth: <code>InfraGuardian_PRD.docx</code>.
+Full repo docs: <code>README.md</code> · <code>CLAUDE.md</code> · <code>DECISIONS.md</code> ·
+<code>MILESTONES.md</code>. Diagrams: <a class="inline-link" href="system_design_high_level.html" target="_blank">high-level</a> ·
+<a class="inline-link" href="system_design_low_level.html" target="_blank">low-level</a> ·
+<a class="inline-link" href="learn_infraguardian.html" target="_blank">full narrated walkthrough</a>.
+</footer>
+
+<div class="navbtns"><button onclick="prevSection('s7')">← Back</button><span></span></div>
+</section>
+
+  </main>
+</div>
+
+<script>
+/* ---------------------------------------------------------------------------------------------
+ * Sidebar / section navigation — identical pattern to docs/learn_infraguardian.html for
+ * consistency across this repo's doc pages.
+ * ------------------------------------------------------------------------------------------- */
+const sections = ['s1','s2','s3','s4','s5','s6','s7'];
+function showSection(id) {
+  sections.forEach(s => document.getElementById(s).classList.toggle('active', s === id));
+  document.querySelectorAll('nav.sidebar a').forEach(a => a.classList.toggle('active', a.dataset.target === id));
+  window.scrollTo(0,0);
+}
+function nextSection(cur) { const i = sections.indexOf(cur); if (i < sections.length-1) showSection(sections[i+1]); }
+function prevSection(cur) { const i = sections.indexOf(cur); if (i > 0) showSection(sections[i-1]); }
+document.querySelectorAll('nav.sidebar a').forEach(a => a.addEventListener('click', () => showSection(a.dataset.target)));
+showSection('s1');
+
+/* ---------------------------------------------------------------------------------------------
+ * Interactive pipeline demo (Section 6).
+ *
+ * Every scenario below is a direct transcription of a real scenario in tools/scenarios.py plus
+ * the exact gate math from tools/thresholds.py / confidence.py / severity.py / routing.py / the
+ * FakeInfraGuardianModel's canned lookup table in tools/llm.py. The *outcome* for each scenario
+ * (severity / calibrated confidence / routing decision / runbook id) is cross-checked against
+ * the hand-derived expected result for that same scenario name in
+ * evaluation/fixtures/incident_cases.py — this is "the real pipeline, re-traced," not an
+ * invented demo.
+ * ------------------------------------------------------------------------------------------- */
+const SCENARIOS = {
+  db_connection_pool_exhaustion: {
+    label: "DB — connection pool exhaustion",
+    domain: "db", domainLabel: "DB",
+    series: "connections_active",
+    unit: "connections", threshold: 85, thresholdLabel: "85% of pool (connections_active / connections_max × 100)",
+    // tools/scenarios.py::_db_connection_pool_exhaustion — connections_active trajectory, pool max 100
+    points: [20,35,50,68,82,93,98,100],
+    breachedAt: 5, // index where utilization first exceeds 85% (93%)
+    breachedRule: { name: "connection_pool_utilization_pct", observed: 93.0, threshold: 85.0 },
+    finding: {
+      root_cause: "Connection pool utilization is approaching exhaustion, consistent with a connection leak or a traffic spike outpacing pool size.",
+      severity: "high",
+      automation_safety: "safe",
+      safety_reason: "Recycling idle/leaked connections is a narrow, reversible action with no data-loss risk."
+    },
+    multiDomain: false,
+    rawConfidence: 0.90,
+    calibration: { reason: "Single domain, specialist reported SAFE → default cap 0.8.", cap: 0.80 },
+    routing: { decision: "auto", reasonSteps: [
+      "Severity is high, not critical → does not escalate on step 1.",
+      "Calibrated confidence 0.80 is not < 0.5 → does not escalate on step 2.",
+      "Confidence 0.80 ≥ 0.80, exactly one domain (DB), that specialist said SAFE, and an allowlisted runbook exists for DB → AUTO_REMEDIATE."
+    ], runbook: "db.recycle_connection_pool" }
+  },
+  cpu_mem_memory_pressure: {
+    label: "CPU/Mem — memory pressure → swapping",
+    domain: "cpu_mem", domainLabel: "CPU/Mem",
+    series: "swap_pct",
+    unit: "% swap", threshold: 10, thresholdLabel: "10% swap utilization",
+    // tools/scenarios.py::_cpu_mem_memory_pressure — swap_pct trajectory
+    points: [0,0,2,8,18,30,42,55],
+    breachedAt: 4,
+    breachedRule: { name: "swap_pct", observed: 18.0, threshold: 10.0 },
+    finding: {
+      root_cause: "The system has started swapping, consistent with memory exhaustion severe enough to threaten overall host stability.",
+      severity: "high",
+      automation_safety: "unknown",
+      safety_reason: "Swapping this severe may indicate a host-wide issue beyond a single safe runbook."
+    },
+    multiDomain: false,
+    rawConfidence: 0.90,
+    calibration: { reason: "Single domain, specialist reported UNKNOWN (not SAFE) → unsafe-single-domain cap 0.65.", cap: 0.65 },
+    routing: { decision: "recommend", reasonSteps: [
+      "Severity is high, not critical → does not escalate on step 1.",
+      "Calibrated confidence 0.65 is not < 0.5 → does not escalate on step 2.",
+      "Confidence 0.65 is below the 0.80 auto-remediate floor → skip auto-remediate.",
+      "Contributing finding's automation_safety is UNKNOWN (not SAFE across all findings) → RECOMMEND. SAFE is a hard requirement, not a tiebreaker."
+    ], runbook: null }
+  },
+  gpu_ecc_errors: {
+    label: "GPU — ECC hardware fault",
+    domain: "gpu", domainLabel: "GPU",
+    series: "ecc_errors",
+    unit: "ECC errors", threshold: 0, thresholdLabel: "0 (any ECC error is anomalous)",
+    // tools/scenarios.py::_gpu_ecc_errors — ecc_errors trajectory
+    points: [0,1,2,4,7,11,16],
+    breachedAt: 1,
+    breachedRule: { name: "ecc_errors", observed: 1, threshold: 0 },
+    finding: {
+      root_cause: "ECC memory errors are present, consistent with a developing hardware fault on this device.",
+      severity: "critical",
+      automation_safety: "unsafe",
+      safety_reason: "ECC errors indicate a possible hardware fault; critical-severity findings never auto-remediate (PRD safety gate)."
+    },
+    multiDomain: false,
+    rawConfidence: 0.90,
+    calibration: { reason: "Severity floor: tools/severity.py maps rule “ecc_errors” to a non-negotiable CRITICAL floor — the model's severity already matches it, so no override needed here, but the floor exists precisely so a model CAN'T soften it.", cap: null },
+    routing: { decision: "escalate", reasonSteps: [
+      "Severity is CRITICAL → ESCALATE, unconditionally. Full stop — this check runs first and overrides every other signal, including a high confidence score."
+    ], runbook: null }
+  },
+  mixed_safety_dual_domain_cpu_db: {
+    label: "Cross-domain — CPU load spike + DB slow queries",
+    domain: "multi", domainLabel: "CPU/Mem + DB",
+    series: "load_avg_1m",
+    unit: "load avg (1m)", threshold: 8, thresholdLabel: "8.0 load average",
+    // tools/scenarios.py::_cpu_mem_load_spike — load_avg_1m trajectory (primary chart; DB panel shown separately in step 3)
+    points: [1.0,2.5,5.0,9.0,14.0,20.0,28.0],
+    breachedAt: 3,
+    breachedRule: { name: "load_avg_1m", observed: 9.0, threshold: 8.0 },
+    secondDomain: {
+      domainLabel: "DB",
+      breachedRule: { name: "query_latency_p95_ms", observed: 260, threshold: 200 },
+      finding: {
+        root_cause: "Query latency has climbed past normal bounds, consistent with a slow-query or missing-index pattern.",
+        severity: "medium",
+        automation_safety: "unsafe",
+        safety_reason: "Killing or restarting queries without knowing which one is responsible risks dropping in-flight work."
+      }
+    },
+    finding: {
+      root_cause: "Load average is spiking well past core count, consistent with a burst of queued work or a blocked resource backing up CPU-bound tasks.",
+      severity: "high",
+      automation_safety: "unknown",
+      safety_reason: "Load spikes can stem from many causes; needs more context before acting automatically."
+    },
+    multiDomain: true,
+    synthesisNote: "Two domains anomalous in the same analysis window (CPU load spike, DB slow queries) → synthesis flags a cross-domain correlation, labeled a hypothesis (no directly measured link between them — e.g. no traced query shown to be causing both).",
+    rawConfidence: 0.60,
+    calibration: { reason: "Two domains, correlation present, but NOT all findings are SAFE (UNKNOWN + UNSAFE) → falls through to default cap 0.8. min(0.60, 0.8) = 0.60.", cap: 0.80 },
+    routing: { decision: "recommend", reasonSteps: [
+      "Worst severity across findings is high, not critical → does not escalate on step 1.",
+      "Calibrated confidence 0.60 is not < 0.5 → does not escalate on step 2.",
+      "Confidence 0.60 is below the 0.80 auto-remediate floor → skip auto-remediate.",
+      "Not all contributing findings are SAFE (CPU=UNKNOWN, DB=UNSAFE) → RECOMMEND."
+    ], runbook: null }
+  },
+  db_healthy: {
+    label: "DB — healthy (no breach)",
+    domain: "db", domainLabel: "DB",
+    series: "query_latency_p95_ms",
+    unit: "ms p95 latency", threshold: 200, thresholdLabel: "200ms p95 latency",
+    // tools/scenarios.py::_db_healthy
+    points: [45,46,47,48,49,50],
+    breachedAt: null,
+    breachedRule: null,
+    healthy: true
+  }
+};
+
+const SCENARIO_ORDER = ["db_connection_pool_exhaustion","cpu_mem_memory_pressure","gpu_ecc_errors","mixed_safety_dual_domain_cpu_db","db_healthy"];
+const domainColor = d => d === "db" ? "var(--series-db)" : d === "cpu_mem" ? "var(--series-cpu)" : d === "gpu" ? "var(--series-gpu)" : "var(--accent)";
+const sevBadge = s => `<span class="badge sev-${s}">${s.toUpperCase()}</span>`;
+const safetyBadge = s => `<span class="badge ${s}">${s.toUpperCase()}</span>`;
+
+let currentScenarioKey = SCENARIO_ORDER[0];
+let currentStep = 0; // 0..5, maps to the 6 flow nodes (healthy scenario stops effectively at step 1)
+
+function pillsHtml() {
+  return SCENARIO_ORDER.map(k => `<span class="pill${k===currentScenarioKey?' active':''}" data-key="${k}">${SCENARIOS[k].label}</span>`).join('');
+}
+
+function renderPills() {
+  document.getElementById('scenarioPills').innerHTML = pillsHtml();
+  document.querySelectorAll('#scenarioPills .pill').forEach(p => p.addEventListener('click', () => {
+    currentScenarioKey = p.dataset.key;
+    currentStep = 0;
+    renderAll();
+  }));
+}
+
+/* Builds a small inline line chart (SVG) for one metric trajectory, with a dashed threshold
+   line and a hover crosshair+tooltip — the minimum interaction bar for a single-series line
+   chart per this repo's dataviz convention (no legend needed for one series; the step-panel
+   title already names it). */
+function renderChart(sc, highlightIdx) {
+  const w = 560, h = 150, padL = 36, padR = 12, padT = 14, padB = 22;
+  const pts = sc.points;
+  const maxV = Math.max(...pts, sc.threshold) * 1.15;
+  const minV = Math.min(0, Math.min(...pts));
+  const x = i => padL + (i/(pts.length-1)) * (w-padL-padR);
+  const y = v => padT + (1 - (v-minV)/(maxV-minV)) * (h-padT-padB);
+  const color = domainColor(sc.domain === "multi" ? "cpu_mem" : sc.domain);
+  const path = pts.map((v,i) => `${i===0?'M':'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const thresholdY = y(sc.threshold).toFixed(1);
+  const dots = pts.map((v,i) => {
+    const breached = sc.breachedAt !== null && i >= sc.breachedAt;
+    return `<circle class="pt" cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="4"
+      fill="${breached ? 'var(--critical)' : color}" stroke="var(--panel2)" stroke-width="1.5"
+      data-v="${v}" data-i="${i}"></circle>`;
+  }).join('');
+  return `
+  <svg class="chart" viewBox="0 0 ${w} ${h}">
+    <line class="grid" x1="${padL}" y1="${padT}" x2="${padL}" y2="${h-padB}" />
+    <line class="grid" x1="${padL}" y1="${h-padB}" x2="${w-padR}" y2="${h-padB}" />
+    ${sc.healthy ? '' : `<line class="threshold" x1="${padL}" y1="${thresholdY}" x2="${w-padR}" y2="${thresholdY}" />
+    <text x="${w-padR}" y="${+thresholdY-5}" text-anchor="end" font-size="10" fill="var(--critical)">threshold ${sc.threshold}</text>`}
+    <path class="series" d="${path}" stroke="${color}" />
+    ${dots}
+  </svg>`;
+}
+
+function stepHtml() {
+  const sc = SCENARIOS[currentScenarioKey];
+  const isHealthy = !!sc.healthy;
+
+  // Step 0 — raw metric sample arriving
+  if (currentStep === 0) {
+    return `
+    <div class="step-title">Step 1 — the metric sample arrives (${sc.domainLabel})</div>
+    <p class="muted">A validated Pydantic <code>MetricSample</code> ticks in every 30s (simulator) or
+    on each poll (real collector). Watching <code>${sc.series}</code> climb over ${sc.points.length} ticks:</p>
+    ${renderChart(sc)}
+    <p class="muted">Hover over a point to see its tick index below; this exact trajectory is
+    <code>tools/scenarios.py::_${currentScenarioKey.includes('healthy') ? currentScenarioKey : Object.keys(SCENARIOS).find(k=>k===currentScenarioKey)}</code>.</p>`;
+  }
+
+  // Step 1 — rule pre-screen
+  if (currentStep === 1) {
+    if (isHealthy) {
+      return `
+      <div class="step-title">Step 2 — deterministic rule pre-screen (tools/thresholds.py)</div>
+      ${renderChart(sc)}
+      <div class="metric-row"><span>${sc.series}</span><span class="ok">final value ${sc.points.at(-1)} — within threshold (${sc.thresholdLabel})</span></div>
+      <div class="reasoning"><b>No rule breached.</b> <code>DetectionResult.is_anomalous = False</code>.
+      The orchestrator's conditional edge <code>_route_anomalous_domains()</code> never adds this
+      domain's specialist as a node for this run — <b>zero LLM calls, zero cost, zero chance of a
+      model hallucinating a problem that isn't there.</b> This is the whole pipeline for a healthy tick.</div>`;
+    }
+    return `
+    <div class="step-title">Step 2 — deterministic rule pre-screen (tools/thresholds.py)</div>
+    ${renderChart(sc)}
+    <div class="metric-row"><span>${sc.breachedRule.name}</span>
+      <span class="breach">observed ${sc.breachedRule.observed} &gt; threshold ${sc.breachedRule.threshold} → BREACHED</span></div>
+    ${sc.secondDomain ? `<div class="metric-row"><span>${sc.secondDomain.breachedRule.name} (${sc.secondDomain.domainLabel})</span>
+      <span class="breach">observed ${sc.secondDomain.breachedRule.observed} &gt; threshold ${sc.secondDomain.breachedRule.threshold} → BREACHED</span></div>` : ''}
+    <div class="reasoning"><b>Rule breached before any LLM is called.</b>
+    <code>DetectionResult.is_anomalous = True</code>. This is a plain <code>if value &gt; threshold</code>
+    check — no model involved yet. Only now does the orchestrator add ${sc.multiDomain ? "both domains'" : "this domain's"}
+    specialist node to the graph.</div>`;
+  }
+
+  // Step 2 — specialist diagnosis
+  if (currentStep === 2) {
+    if (isHealthy) {
+      return `<div class="step-title">Step 3 — specialist diagnosis</div>
+      <div class="reasoning">Skipped. Nothing anomalous was flagged in Step 2, so no specialist agent
+      is invoked for ${sc.domainLabel} on this tick — this is the FR-06 guarantee made concrete.</div>`;
+    }
+    const f = sc.finding;
+    let html = `<div class="step-title">Step 3 — specialist diagnosis (${sc.domainLabel} agent)</div>
+    <p class="muted">The specialist's prompt describes the breached rule(s) above. It returns a
+    schema-valid <code>SpecialistFinding</code> via <code>with_structured_output()</code>:</p>
+    <div class="card" style="margin-bottom:10px;">
+      <h4>${sc.domainLabel} — ${sevBadge(f.severity)} ${safetyBadge(f.automation_safety)}</h4>
+      <p><b>Root cause hypothesis:</b> ${f.root_cause}</p>
+      <p style="margin-top:6px;"><b>Automation safety reason:</b> ${f.safety_reason}</p>
+    </div>`;
+    if (sc.secondDomain) {
+      const f2 = sc.secondDomain.finding;
+      html += `<div class="card">
+      <h4>${sc.secondDomain.domainLabel} — ${sevBadge(f2.severity)} ${safetyBadge(f2.automation_safety)}</h4>
+      <p><b>Root cause hypothesis:</b> ${f2.root_cause}</p>
+      <p style="margin-top:6px;"><b>Automation safety reason:</b> ${f2.safety_reason}</p>
+      </div>`;
+    }
+    html += `<div class="reasoning">Note the <code>automation_safety</code> verdict on each finding —
+    that field, not the severity, is what the routing gate leans on to decide if auto-remediation is
+    even eligible.</div>`;
+    return html;
+  }
+
+  // Step 3 — synthesis
+  if (currentStep === 3) {
+    if (isHealthy) {
+      return `<div class="step-title">Step 4 — synthesis</div>
+      <div class="reasoning">Skipped — zero specialists fired, so there's nothing to correlate.
+      An instant "all healthy" incident report is produced.</div>`;
+    }
+    if (!sc.multiDomain) {
+      return `<div class="step-title">Step 4 — synthesis</div>
+      <div class="reasoning">Only one domain is anomalous here, so there's nothing to correlate
+      across domains — synthesis still runs (to produce the unified report shape) but with a
+      single contributing finding and no cross-domain correlation entries.</div>`;
+    }
+    return `<div class="step-title">Step 4 — synthesis (cross-domain correlation)</div>
+    <div class="reasoning"><b>${sc.synthesisNote}</b></div>
+    <p class="muted"><code>CrossDomainCorrelation.is_causal_hypothesis</code> defaults to
+    <code>True</code> — PRD §9 requires every causal-sounding claim to be labeled a hypothesis
+    unless there's directly measured evidence (a traced query, not just "happened around the same
+    time"). Nothing in this scenario clears that bar, so it stays a hypothesis.</p>`;
+  }
+
+  // Step 4 — calibration
+  if (currentStep === 4) {
+    if (isHealthy) {
+      return `<div class="step-title">Step 5 — calibration</div>
+      <div class="reasoning">Skipped — no findings to calibrate confidence or severity against.</div>`;
+    }
+    const c = sc.calibration;
+    return `<div class="step-title">Step 5 — confidence &amp; severity calibration</div>
+    <p class="muted">The synthesis LLM reports its own confidence
+    (<code>${sc.rawConfidence.toFixed(2)}</code> here). The gate never trusts that number raw:</p>
+    <div class="metric-row"><span>Raw model confidence</span><span>${sc.rawConfidence.toFixed(2)}</span></div>
+    ${c.cap !== null ? `<div class="metric-row"><span>Deterministic cap applied</span><span>${c.cap.toFixed(2)}</span></div>
+    <div class="metric-row"><span><b>Calibrated confidence (min of the two)</b></span><span><b>${Math.min(sc.rawConfidence,c.cap).toFixed(2)}</b></span></div>` : ''}
+    <div class="reasoning">${c.reason}</div>`;
+  }
+
+  // Step 5 — routing decision
+  if (currentStep === 5) {
+    if (isHealthy) {
+      return `<div class="step-title">Step 6 — routing decision</div>
+      <div class="reasoning">No incident exists to route — the report is simply "all domains
+      healthy," with zero LLM calls and nothing in the audit log beyond that fact.</div>`;
+    }
+    const r = sc.routing;
+    const badgeClass = r.decision === "auto" ? "auto" : r.decision === "recommend" ? "recommend" : "escalate";
+    const badgeText = r.decision === "auto" ? "AUTO_REMEDIATE" : r.decision === "recommend" ? "RECOMMEND" : "ESCALATE";
+    return `<div class="step-title">Step 6 — routing decision (tools/routing.py::route(), pure Python — not an LLM call)</div>
+    <p><span class="badge ${badgeClass}" style="font-size:14px; padding:7px 16px;">${badgeText}</span>
+    ${r.runbook ? `<span class="muted"> → runbook <code>${r.runbook}</code></span>` : ''}</p>
+    <ol>${r.reasonSteps.map(s => `<li style="margin:6px 0; color:var(--muted); font-size:13.5px;">${s}</li>`).join('')}</ol>
+    <div class="reasoning"><b>Logged to the audit trail:</b> decision, full reasoning, confidence,
+    severity, and (if applicable) the exact runbook id — every one of these fields, on every
+    incident, regardless of which path was taken.</div>`;
+  }
+  return '';
+}
+
+function renderFlowHighlight() {
+  const maxStep = SCENARIOS[currentScenarioKey].healthy ? 5 : 5; // all 6 nodes always shown; healthy just "skips" with a note
+  document.querySelectorAll('#pipelineFlow .node').forEach(n => {
+    const step = parseInt(n.dataset.step, 10);
+    n.classList.remove('live','done');
+    if (step < currentStep) n.classList.add('done');
+    else if (step === currentStep) n.classList.add('live');
+  });
+}
+
+function renderStepControls() {
+  document.getElementById('stepBack').disabled = currentStep === 0;
+  document.getElementById('stepFwd').disabled = currentStep === 5;
+  document.getElementById('stepCounter').textContent = `Step ${currentStep+1} of 6`;
+}
+
+function renderAll() {
+  renderPills();
+  document.getElementById('stepPanel').innerHTML = stepHtml();
+  renderFlowHighlight();
+  renderStepControls();
+}
+
+document.getElementById('stepFwd').addEventListener('click', () => { if (currentStep < 5) { currentStep++; renderAll(); } });
+document.getElementById('stepBack').addEventListener('click', () => { if (currentStep > 0) { currentStep--; renderAll(); } });
+document.getElementById('stepReset').addEventListener('click', () => { currentStep = 0; renderAll(); });
+
+renderAll();
+</script>
+</body>
+</html>

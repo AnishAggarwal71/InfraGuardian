@@ -503,14 +503,14 @@ verification deferred to the user, per Decision 4.
 
 **Decision:** Added an explicit `[[tool.uv.index]]` block to `pyproject.toml` pinning
 `https://pypi.org/simple` as the default index, project-scoped (not a global/user-level
-override). `uv.lock` needs regenerating against that index (`uv lock`) to replace every
-internal-mirror URL it currently records.
+override). `uv.lock` needed regenerating against that index (`uv lock`) to replace every
+internal-mirror URL it previously recorded.
 
-**Why:** The development machine's global `uv` config (`~/.config/uv/uv.toml`) defaulted to a private, authenticated PyPI mirror,
-which `uv lock` silently resolved and recorded into every package
-entry in `uv.lock` — a portfolio project meant to be cloned and run by anyone outside that
-network can't resolve a lockfile pointing at an internal, authenticated mirror. The fix has to
-live in the project's own `pyproject.toml` (not just "run `uv lock` once off a different
+**Why:** The development machine's global `uv` config (`~/.config/uv/uv.toml`) defaulted to a
+private, authenticated PyPI mirror, which `uv lock` silently resolved and recorded into every
+package entry in `uv.lock` — a portfolio project meant to be cloned and run by anyone outside
+that network can't resolve a lockfile pointing at a private, authenticated mirror. The fix has
+to live in the project's own `pyproject.toml` (not just "run `uv lock` once off a different
 machine") so the pin survives regeneration on *any* machine, including ones that also have an
 internal mirror configured as their global default.
 
@@ -519,16 +519,16 @@ internal mirror configured as their global default.
    equivalent; `pyproject.toml` was preferred to keep all project config in one file rather than
    add a second config file for one setting.
 2. Just re-run `uv lock` on a machine with no internal mirror configured — rejected because
-   nothing would stop a private mirror's URLs from silently reappearing the next time someone regenerates
-   the lock on a machine with one configured; the index pin makes "resolve against public PyPI" the
-   project's own property, not a property of whoever happens to run the command.
+   nothing would stop a private mirror's URLs from silently reappearing the next time someone
+   regenerates the lock on a machine with one configured; the index pin makes "resolve against
+   public PyPI" the project's own property, not a property of whoever happens to run the command.
 
 **Note:** regenerating `uv.lock` against this pin was explicitly left to the user to run
 locally (`uv lock`, then `uv run pytest -q` to confirm) — the harness's own permission
 classifier declined to let the agent execute that resolution step itself here, treating a
 network-reaching registry change as needing an explicit go-ahead rather than inferring one from
-a general request to drop the private-mirror lock entries. The `pyproject.toml` pin is in place either way;
-only the lockfile regeneration itself is pending.
+a general request to drop the private-mirror lock entries. The `pyproject.toml` pin is in place
+either way; only the lockfile regeneration itself is pending.
 
 ---
 

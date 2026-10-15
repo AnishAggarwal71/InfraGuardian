@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-11T18:05:10.048092Z",
+  "generated_at": "2026-10-12T07:15:07.954379Z",
   "detection_accuracy": 1.0,
   "rca_accuracy": 1.0,
   "routing_accuracy": 1.0,
@@ -7,8 +7,8 @@
   "schema_validity_rate": 1.0,
   "rule_filtering_rate": 0.0,
   "llm_call_count": 40,
-  "latency_p50_ms": 0.874458986800164,
-  "latency_p95_ms": 2.371573357959278,
+  "latency_p50_ms": 0.8724374347366393,
+  "latency_p95_ms": 2.261696575442329,
   "detection_results": [
     {
       "name": "db_healthy[0]",
