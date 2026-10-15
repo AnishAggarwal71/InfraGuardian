@@ -27,10 +27,27 @@ boundary for an internal telemetry detail isn't worth breaking it. This is safe 
 specialist/synthesis LLM call runs to completion within a single LangGraph node's own thread
 before any other node can read `get_last_cost_usd()` — the same concurrency assumption
 `tools.observability._MetricsRecorder`'s lock already documents.
+
+The same call is wrapped in a timeout and bounded exponential-backoff retry
+(`_call_provider_with_retries`) — a transient provider hiccup previously went straight to the
+orchestrator's fail-closed sentinel; it now gets `_MAX_RETRIES` chances first. A per-run cost
+budget (`start_cost_budget()`/`get_cumulative_cost_usd()`) is opt-in: the orchestrator calls
+`start_cost_budget()` once per `run_incident()`, and `invoke_structured()` refuses to make
+another call once the run's cumulative known cost reaches the limit, raising
+`CostBudgetExceededError` — which the orchestrator's existing broad exception handling around
+each specialist/synthesis call already treats as a fail-closed signal, same as any other LLM
+failure (PRD §9). The budget is shared across every call in one run via a `ContextVar`
+(`_CostBudget`), not a thread-local, because LangGraph's parallel specialist branches (PRD FR-08)
+run on separate worker threads a thread-local tracker would never see. An unlisted model's real
+(nonzero) token usage now reports `cost_usd=None` plus `pricing_unknown=True` instead of a
+silent `$0.00` (`REAL_MODEL_VALIDATION.md` P1) — zero usage (the fake model) still reports a
+real, known `$0.00`.
 """
 
 from __future__ import annotations
 
+import concurrent.futures
+import contextvars
 import os
 import re
 import threading
@@ -318,9 +335,10 @@ def get_chat_model() -> Any:
 
 
 # USD per 1M tokens, (input, output). Covers the models this project has actually been run
-# against — not an exhaustive provider price list. An unlisted model string prices as free
-# (cost reported as 0.0) rather than raising, so cost tracking never blocks a real LLM call;
-# `get_last_cost_usd()` still returns a number, just a known-incomplete one.
+# against — not an exhaustive provider price list. An unlisted model string with real token
+# usage prices as unknown (`cost_usd=None`, `pricing_unknown=True`, see `_price_usage` below),
+# never as a silent `$0.00` — cost tracking still never blocks a real LLM call, it just reports
+# the gap honestly instead of masking it.
 _PRICING_PER_MILLION_TOKENS: dict[str, tuple[float, float]] = {
     "claude-sonnet-4-5-20250929": (3.0, 15.0),
     "claude-opus-4-5-20251101": (5.0, 25.0),
@@ -330,41 +348,219 @@ _PRICING_PER_MILLION_TOKENS: dict[str, tuple[float, float]] = {
 _cost_local = threading.local()
 
 
+class _CostBudget:
+    """
+    Shared, lock-protected per-run cost accumulator.
+
+    `tools.observability._MetricsRecorder` already documents why specialist nodes run as
+    concurrent LangGraph branches on separate worker threads (PRD FR-08) — a `threading.local()`
+    budget tracker would silently never see any specialist's spend from `run_incident()`'s own
+    thread, so a configured budget would never actually bind. LangGraph propagates the calling
+    thread's `contextvars.Context` into each node's worker thread (confirmed: a `ContextVar` set
+    before `run_incident()` is visible inside every specialist call), so a single shared object
+    referenced via a `ContextVar` — not a thread-local — is what makes the budget apply across
+    every call in one run, regardless of which thread makes it.
+    """
+
+    def __init__(self, max_cost_usd: float | None) -> None:
+        self.max_cost_usd = max_cost_usd
+        self._spent_usd = 0.0
+        self._lock = threading.Lock()
+
+    def add(self, cost_usd: float) -> None:
+        with self._lock:
+            self._spent_usd += cost_usd
+
+    def spent(self) -> float:
+        with self._lock:
+            return self._spent_usd
+
+
+_cost_budget_var: contextvars.ContextVar["_CostBudget | None"] = contextvars.ContextVar(
+    "infraguardian_cost_budget", default=None
+)
+
+# Timeout/retry/backoff constants for real provider calls (`REAL_MODEL_VALIDATION.md` P1 /
+# external-review gap #1: "no timeouts, retries, or backoff"). Deliberately plain module
+# constants rather than env-driven — tests monkeypatch them directly, same pattern as every
+# other tuned constant in this project (see `tools/thresholds.py`).
+_DEFAULT_TIMEOUT_SEC = 20.0
+_MAX_RETRIES = 2
+_BACKOFF_BASE_SEC = 0.5
+
+_MAX_COST_USD_PER_RUN_ENV = "INFRAGUARDIAN_MAX_COST_USD_PER_RUN"
+
+
 class StructuredOutputError(RuntimeError):
     """Raised when a provider response cannot be converted to the requested output schema."""
 
 
-def _price_usage(model_name: str, usage: dict[str, int]) -> float:
-    """Price one call's token usage against `_PRICING_PER_MILLION_TOKENS`; unknown model -> 0.0."""
-    input_price, output_price = _PRICING_PER_MILLION_TOKENS.get(model_name, (0.0, 0.0))
+class LLMCallTimeoutError(RuntimeError):
+    """Raised when a provider call exceeds `_DEFAULT_TIMEOUT_SEC`, after retries are exhausted."""
+
+
+class CostBudgetExceededError(RuntimeError):
+    """
+    Raised when a run's cumulative LLM cost has already reached its configured per-run budget,
+    before making another call. Caught by the orchestrator's existing broad `except Exception`
+    around each specialist/synthesis call, so a budget breach fails closed to the same
+    sentinel-finding/ESCALATE path as any other LLM failure (PRD §9) rather than needing its own
+    special-cased handling.
+    """
+
+
+def _price_usage(model_name: str, usage: dict[str, int]) -> tuple[float | None, bool]:
+    """
+    Price one call's token usage against `_PRICING_PER_MILLION_TOKENS`.
+
+    Returns `(cost_usd, pricing_unknown)`. Zero usage (the fake model, which performs no real
+    inference) always prices as a real, known `$0.00` — not an unknown-pricing gap. Nonzero
+    usage against a model string absent from the pricing table returns `(None, True)` rather
+    than silently reporting `$0.00`, per the P1 fix in `REAL_MODEL_VALIDATION.md`: a `$0.00`
+    that just means "we don't have this model's price" must not look identical to a genuinely
+    free call.
+    """
     input_tokens = usage.get("input_tokens", 0) or 0
     output_tokens = usage.get("output_tokens", 0) or 0
-    return (input_tokens * input_price + output_tokens * output_price) / 1_000_000
+    if input_tokens == 0 and output_tokens == 0:
+        return 0.0, False
+    pricing = _PRICING_PER_MILLION_TOKENS.get(model_name)
+    if pricing is None:
+        return None, True
+    input_price, output_price = pricing
+    return (input_tokens * input_price + output_tokens * output_price) / 1_000_000, False
 
 
 def get_last_cost_usd() -> float | None:
     """
     Return the USD cost computed by the most recent `invoke_structured()` call on this thread,
-    or `None` if none has run yet on this thread. Must be read immediately after the matching
-    `invoke_structured()` call — see module docstring for the thread-local safety rationale.
+    or `None` if none has run yet on this thread, or if that call's model string has no entry in
+    `_PRICING_PER_MILLION_TOKENS` (see `get_last_pricing_unknown()` to distinguish the two). Must
+    be read immediately after the matching `invoke_structured()` call — see module docstring for
+    the thread-local safety rationale.
     """
     return getattr(_cost_local, "last_cost_usd", None)
+
+
+def get_last_pricing_unknown() -> bool:
+    """
+    Return whether the most recent `invoke_structured()` call on this thread used real token
+    usage priced against a model string absent from `_PRICING_PER_MILLION_TOKENS`. `True` means
+    `get_last_cost_usd()` is `None` because the price is genuinely unknown, not because the call
+    was actually free.
+    """
+    return getattr(_cost_local, "last_pricing_unknown", False)
+
+
+def start_cost_budget(max_cost_usd: float | None) -> None:
+    """
+    Start a new cumulative-cost tracker for one `run_incident()` call.
+
+    `max_cost_usd=None` disables budget enforcement entirely (the default) — every call still
+    accumulates `get_cumulative_cost_usd()`, it's just never compared against a limit. Must be
+    called from the thread that then calls `run_incident()`/the orchestrator entrypoint — the
+    tracker is propagated to specialist/synthesis calls via a `ContextVar`, which LangGraph
+    carries into each node's worker thread automatically (see `_CostBudget`'s docstring).
+    """
+    _cost_budget_var.set(_CostBudget(max_cost_usd))
+
+
+def get_cumulative_cost_usd() -> float:
+    """Return the current run's cumulative known LLM cost since the last `start_cost_budget()`."""
+    budget = _cost_budget_var.get()
+    return budget.spent() if budget is not None else 0.0
+
+
+def _call_provider_with_retries(
+    model: Any, schema: type, prompt: str, trace_id: str | None, model_name: str
+) -> Any:
+    """
+    Call `model.with_structured_output(schema, include_raw=True).invoke(prompt)` under a timeout,
+    retrying transient failures (timeouts, network/provider errors) up to `_MAX_RETRIES` times
+    with exponential backoff before giving up.
+
+    Deliberately does NOT retry on a successful call that returns `parsed=None`/a parsing error
+    — that's a deterministic schema-validity failure the provider's own response caused, not a
+    transient fault a retry would fix, and `invoke_structured` already treats it as fail-closed
+    on its own. Only exceptions raised by the call itself (including this function's own
+    `LLMCallTimeoutError`) are retried.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(_MAX_RETRIES + 1):
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
+            runnable = model.with_structured_output(schema, include_raw=True)
+            future = executor.submit(runnable.invoke, prompt)
+            try:
+                return future.result(timeout=_DEFAULT_TIMEOUT_SEC)
+            except concurrent.futures.TimeoutError as exc:
+                raise LLMCallTimeoutError(
+                    f"{schema.__name__} call exceeded {_DEFAULT_TIMEOUT_SEC}s timeout "
+                    f"(attempt {attempt + 1}/{_MAX_RETRIES + 1})."
+                ) from exc
+        except Exception as exc:  # noqa: BLE001 - deliberately broad: any call failure may be transient
+            last_exc = exc
+            if attempt < _MAX_RETRIES:
+                record_trace_event(
+                    trace_id,
+                    "llm_call_retry",
+                    attempt=attempt + 1,
+                    max_retries=_MAX_RETRIES,
+                    model_name=model_name,
+                    schema=schema.__name__,
+                    error=exc,
+                )
+                time.sleep(_BACKOFF_BASE_SEC * (2**attempt))
+                continue
+            raise
+        finally:
+            # Don't block here waiting for a timed-out call's background thread to finish —
+            # that would defeat the point of the timeout. The thread is left to finish on its
+            # own; its result is simply never read.
+            executor.shutdown(wait=False)
+    raise last_exc  # pragma: no cover - loop always returns or raises above
 
 
 def invoke_structured(model: Any, schema: type, prompt: str, trace_id: str | None = None) -> Any:
     """
     The one call site every specialist/synthesis LLM call goes through: requests `schema`-typed
-    structured output from `model`, prices the real token usage (when the provider attaches
+    structured output from `model`, retrying transient failures with backoff under a timeout
+    (`_call_provider_with_retries`), prices the real token usage (when the provider attaches
     `usage_metadata` to the raw message) via `_PRICING_PER_MILLION_TOKENS`, and stores the
-    computed cost for `get_last_cost_usd()` to read right after. Returns just the parsed
-    structured object — callers are unaffected by the `include_raw` plumbing.
+    computed cost for `get_last_cost_usd()`/`get_last_pricing_unknown()` to read right after.
+    Returns just the parsed structured object — callers are unaffected by the `include_raw`
+    plumbing.
+
+    Raises `CostBudgetExceededError` *before* calling the provider if the current run's
+    cumulative cost (set up via `start_cost_budget()`, shared across threads via a `ContextVar`)
+    has already reached its configured limit — a budget check gates the next call, it doesn't
+    abort one already in flight.
     """
     model_name = getattr(model, "model", None) or getattr(model, "model_name", None) or ""
     start = time.perf_counter()
     _cost_local.last_cost_usd = None
+    _cost_local.last_pricing_unknown = False
+
+    budget = _cost_budget_var.get()
+    if budget is not None and budget.max_cost_usd is not None and budget.spent() >= budget.max_cost_usd:
+        error = CostBudgetExceededError(
+            f"Per-run LLM cost budget (${budget.max_cost_usd:.4f}) already reached "
+            f"(${budget.spent():.4f} spent) — refusing to make another {schema.__name__} call."
+        )
+        record_trace_event(
+            trace_id,
+            "llm_call",
+            success=False,
+            model_name=model_name,
+            schema=schema.__name__,
+            prompt=prompt,
+            latency_ms=(time.perf_counter() - start) * 1000,
+            error=error,
+        )
+        raise error
 
     try:
-        result = model.with_structured_output(schema, include_raw=True).invoke(prompt)
+        result = _call_provider_with_retries(model, schema, prompt, trace_id, model_name)
     except Exception as exc:
         record_trace_event(
             trace_id,
@@ -382,7 +578,11 @@ def invoke_structured(model: Any, schema: type, prompt: str, trace_id: str | Non
     parsed = result.get("parsed") if isinstance(result, dict) else result
     parsing_error = result.get("parsing_error") if isinstance(result, dict) else None
     usage = getattr(raw, "usage_metadata", None) or {}
-    _cost_local.last_cost_usd = _price_usage(model_name, usage)
+    cost_usd, pricing_unknown = _price_usage(model_name, usage)
+    _cost_local.last_cost_usd = cost_usd
+    _cost_local.last_pricing_unknown = pricing_unknown
+    if cost_usd is not None and budget is not None:
+        budget.add(cost_usd)
 
     if parsing_error is not None or parsed is None:
         error = StructuredOutputError(
@@ -400,7 +600,8 @@ def invoke_structured(model: Any, schema: type, prompt: str, trace_id: str | Non
             parsed_response=parsed,
             parsing_error=parsing_error,
             usage_metadata=usage,
-            cost_usd=_cost_local.last_cost_usd,
+            cost_usd=cost_usd,
+            pricing_unknown=pricing_unknown,
             latency_ms=(time.perf_counter() - start) * 1000,
             error=error,
         )
@@ -422,7 +623,8 @@ def invoke_structured(model: Any, schema: type, prompt: str, trace_id: str | Non
                 parsed_response=parsed,
                 parsing_error=parsing_error,
                 usage_metadata=usage,
-                cost_usd=_cost_local.last_cost_usd,
+                cost_usd=cost_usd,
+                pricing_unknown=pricing_unknown,
                 latency_ms=(time.perf_counter() - start) * 1000,
                 error=error,
             )
@@ -438,7 +640,8 @@ def invoke_structured(model: Any, schema: type, prompt: str, trace_id: str | Non
         raw_response=raw,
         parsed_response=parsed,
         usage_metadata=usage,
-        cost_usd=_cost_local.last_cost_usd,
+        cost_usd=cost_usd,
+        pricing_unknown=pricing_unknown,
         latency_ms=(time.perf_counter() - start) * 1000,
     )
     return parsed

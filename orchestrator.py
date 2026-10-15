@@ -18,6 +18,7 @@ runbook and records the FR-16 audit row.
 
 from __future__ import annotations
 
+import os
 import time
 import uuid
 from datetime import datetime, timezone
@@ -36,7 +37,13 @@ from agents.schemas import (
 )
 from storage import incident_store
 from tools.confidence import calibrate
-from tools.llm import get_chat_model, get_last_cost_usd, invoke_structured
+from tools.llm import (
+    get_chat_model,
+    get_last_cost_usd,
+    get_last_pricing_unknown,
+    invoke_structured,
+    start_cost_budget,
+)
 from tools.metrics import Domain, MetricSample
 from tools.observability import RECORDER
 from tools.remediation import RUNBOOKS
@@ -44,6 +51,9 @@ from tools.routing import route
 from tools.severity import severity_floor
 from tools.thresholds import DetectionResult, evaluate
 from tools.tracing import new_trace_id, record_trace_event, tracing_enabled
+
+_MAX_COST_USD_PER_RUN_ENV = "INFRAGUARDIAN_MAX_COST_USD_PER_RUN"
+
 
 _SPECIALISTS = {
     Domain.DB: db_agent.diagnose,
@@ -129,6 +139,7 @@ def _make_specialist_node(domain: Domain):
                 (time.perf_counter() - start) * 1000,
                 success=True,
                 cost_usd=get_last_cost_usd(),
+                pricing_unknown=get_last_pricing_unknown(),
             )
         except Exception as exc:  # noqa: BLE001 - deliberately broad: any failure fails closed
             RECORDER.record_agent_call(domain.value, (time.perf_counter() - start) * 1000, success=False)
@@ -241,6 +252,7 @@ def _synthesize(state: IncidentState) -> IncidentState:
             (time.perf_counter() - _start) * 1000,
             success=True,
             cost_usd=get_last_cost_usd(),
+            pricing_unknown=get_last_pricing_unknown(),
         )
     except Exception as exc:  # noqa: BLE001 - deliberately broad: any failure fails closed
         RECORDER.record_agent_call("synthesis", (time.perf_counter() - _start) * 1000, success=False)
@@ -283,7 +295,7 @@ def _route_and_remediate(state: IncidentState) -> IncidentState:
         # Healthy/no-incident case already has its final routing_decision set in `_synthesize`.
         return {"report": report}
 
-    routing_result = route(report, findings)
+    routing_result = route(report, findings, state["detections"])
 
     updates: dict[str, Any] = {"routing_decision": routing_result.decision}
 
@@ -345,8 +357,15 @@ def run_incident(samples: dict[Domain, MetricSample], persist: bool = True) -> I
     Always records end-to-end latency, routing decision, and confidence to
     `tools.observability.RECORDER` (PRD §11) regardless of `persist`, since self-observability
     is not the same concern as incident durability.
+
+    Reads `INFRAGUARDIAN_MAX_COST_USD_PER_RUN` (unset by default) to cap this run's cumulative
+    known LLM cost — once reached, `invoke_structured` raises `CostBudgetExceededError` before
+    making another call, which the specialist/synthesis nodes' existing broad exception handling
+    turns into the same fail-closed sentinel/ESCALATE path as any other LLM failure (PRD §9).
     """
     start = time.perf_counter()
+    max_cost_str = os.environ.get(_MAX_COST_USD_PER_RUN_ENV)
+    start_cost_budget(float(max_cost_str) if max_cost_str else None)
     trace_id = new_trace_id() if tracing_enabled() else None
     record_trace_event(
         trace_id,

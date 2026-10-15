@@ -20,6 +20,7 @@ def test_empty_snapshot_has_zeroed_metrics(recorder):
     assert snap.agent_failure_rate == 0.0
     assert snap.total_incidents == 0
     assert snap.cost_per_incident_usd is None
+    assert snap.pricing_unknown_calls == 0
 
 
 def test_agent_failure_rate_computed_correctly(recorder):
@@ -76,3 +77,15 @@ def test_cost_per_incident_ignores_calls_with_no_cost_recorded(recorder):
 
     snap = recorder.snapshot()
     assert snap.cost_per_incident_usd == pytest.approx(0.0)
+
+
+def test_pricing_unknown_call_is_counted_and_excluded_from_cost_average(recorder):
+    """A real call against an unlisted model (`cost_usd=None`, `pricing_unknown=True`) must be
+    visible as a pricing gap, not silently indistinguishable from a merely-uncosted call."""
+    recorder.record_agent_call("db", 10.0, success=True, cost_usd=None, pricing_unknown=True)
+    recorder.record_agent_call("synthesis", 5.0, success=True, cost_usd=0.01, pricing_unknown=False)
+    recorder.record_incident(100.0, RoutingDecision.RECOMMEND, 0.8)
+
+    snap = recorder.snapshot()
+    assert snap.pricing_unknown_calls == 1
+    assert snap.cost_per_incident_usd == pytest.approx(0.01)

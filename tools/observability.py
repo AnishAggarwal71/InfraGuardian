@@ -15,6 +15,12 @@ recorded call costs divided by the number of completed incidents — `None` only
 incidents have run yet. The fake model reports a real (not faked) `$0.00`, since it performs no
 real inference. Coverage is limited to the pricing table in `tools.llm`, which only lists models
 this project has actually been run against.
+
+A call against a real but unlisted model has nonzero token usage but no known USD rate —
+`tools.llm._price_usage` returns `cost_usd=None` for that case, distinct from the fake model's
+genuine `$0.00`. `record_agent_call`'s `pricing_unknown` param carries that distinction through so
+`cost_per_incident_usd` doesn't silently average away a pricing gap: `pricing_unknown_calls` in
+the snapshot makes the gap visible instead.
 """
 
 from __future__ import annotations
@@ -36,6 +42,7 @@ class AgentCallRecord(BaseModel):
     success: bool
     recorded_at: datetime
     cost_usd: float | None = None
+    pricing_unknown: bool = False
 
 
 class IncidentRecord(BaseModel):
@@ -63,6 +70,7 @@ class ObservabilitySnapshot(BaseModel):
     confidence_max: float
     collector_failures: int
     cost_per_incident_usd: float | None = None
+    pricing_unknown_calls: int = 0
 
 
 class _MetricsRecorder:
@@ -79,9 +87,20 @@ class _MetricsRecorder:
         self._collector_failures = 0
 
     def record_agent_call(
-        self, agent: str, latency_ms: float, success: bool, cost_usd: float | None = None
+        self,
+        agent: str,
+        latency_ms: float,
+        success: bool,
+        cost_usd: float | None = None,
+        pricing_unknown: bool = False,
     ) -> None:
-        """Record one specialist/synthesis LLM invocation's outcome, latency, and USD cost."""
+        """Record one specialist/synthesis LLM invocation's outcome, latency, and USD cost.
+
+        `pricing_unknown=True` marks a call with real (nonzero) token usage against a model not
+        in `tools.llm`'s pricing table — distinct from `cost_usd=0.0`, which means a real,
+        known-zero cost (the fake model). Keeping the two distinguishable here is what lets
+        `cost_per_incident_usd` avoid silently averaging away a pricing gap.
+        """
         with self._lock:
             self._agent_calls.append(
                 AgentCallRecord(
@@ -90,6 +109,7 @@ class _MetricsRecorder:
                     success=success,
                     recorded_at=datetime.now(timezone.utc),
                     cost_usd=cost_usd,
+                    pricing_unknown=pricing_unknown,
                 )
             )
             if not success:
@@ -145,6 +165,7 @@ class _MetricsRecorder:
 
         costs = [c.cost_usd for c in calls if c.cost_usd is not None]
         cost_per_incident = (sum(costs) / len(incidents)) if incidents else None
+        pricing_unknown_calls = sum(1 for c in calls if c.pricing_unknown)
 
         return ObservabilitySnapshot(
             total_agent_calls=total_calls,
@@ -160,6 +181,7 @@ class _MetricsRecorder:
             confidence_max=max(confidences) if confidences else 0.0,
             collector_failures=collector_failures,
             cost_per_incident_usd=cost_per_incident,
+            pricing_unknown_calls=pricing_unknown_calls,
         )
 
 
