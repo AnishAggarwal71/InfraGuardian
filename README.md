@@ -1,5 +1,7 @@
 # InfraGuardian
 
+[![CI](https://github.com/AnishAggarwal71/InfraGaurdian/actions/workflows/ci.yml/badge.svg)](https://github.com/AnishAggarwal71/InfraGaurdian/actions/workflows/ci.yml)
+
 An agentic infrastructure incident-response system: deterministic anomaly detection across
 DB / CPU-mem / GPU domains, specialist LLM agents invoked only on flagged anomalies, a
 LangGraph orchestrator that correlates cross-domain findings into a unified incident report,
@@ -49,7 +51,15 @@ Metric Sources → Ingestion → Rule Pre-Screen → Specialist Agents (parallel
   ever reaches the routing gate — a hallucinated confidence number can't flow through unchecked.
 - **Routing & safety gates** (`tools/routing.py`) are a pure deterministic function, not an LLM
   call: critical severity and low confidence are checked first and unconditionally override
-  everything else.
+  everything else. Even a high-confidence, model-verdict-`SAFE` finding only reaches
+  `AUTO_REMEDIATE` if `tools/preconditions.py::check_preconditions()` also confirms the specific
+  rule breach that runbook targets is the *only* breach in that domain — a model's diagnosis is
+  necessary but not sufficient; the deterministic precondition gate is what actually authorizes
+  automation (`REAL_MODEL_VALIDATION.md` P1). This also closes an indirect prompt-injection
+  path: even if attacker-controlled text (e.g. from a monitored query string) reached a
+  specialist's free-text output, routing and preconditions only ever read typed
+  `Severity`/`AutomationSafety`/`DetectionResult` fields — never the free text itself
+  (`tests/test_prompt_injection.py`).
 - **Remediation** (`tools/remediation.py`) executes only from a static allowlist the LLM can
   select from but never construct. Execution is simulated (no real infra in this project) —
   the mechanism being demonstrated is the safety gate and audit trail, not real remediation.
@@ -276,6 +286,36 @@ An unparsed or schema-invalid live-model response is recorded in the trace and r
 the orchestrator's fail-closed sentinel finding; it cannot flow downstream as a `None` finding
 or trigger automated remediation.
 
+### Live evaluator (`evaluation/live_evaluator.py`)
+
+The manual spot-check above doesn't repeat cases or quantify variance. `evaluation/live_evaluator.py`
+is the harness `REAL_MODEL_VALIDATION.md`'s P1 asks for: it runs the same 17 `INCIDENT_CASES`
+fixtures the fake-model evaluator uses, repeated N times per case against a real provider/model,
+and writes an immutable JSON manifest plus a per-case JSONL trace tree — all without this repo
+or CI ever making a real API call. It makes zero LLM calls on its own; running it against a real
+model and spending real API budget is a deliberate choice you make yourself with your own key:
+
+```bash
+ANTHROPIC_API_KEY=... uv run python -m evaluation.live_evaluator \
+    --model anthropic:claude-sonnet-4-5-20250929 --repeats 5
+```
+
+Reports, per case and overall: severity/routing/RCA accuracy against the hand-derived fixture
+expectations, how many *distinct* severities/routing decisions a case produced across its
+repeats (the run-to-run variance signal — 1 means the model was consistent, >1 means it wasn't),
+p50/p95 latency, total and per-run USD cost (via the same `tools.llm` pricing/`pricing_unknown`
+path the fake-model path uses), and an explicit count of PRD §9 safety-invariant violations
+(critical-severity auto-remediation, confidence-gate bypass, false auto-remediation) computed
+from the live report's own fields — this is the same category of check that caught the
+`gpu_ecc_errors` severity-downgrade P0 above, now repeatable on demand instead of a one-off
+manual run. `--max-total-cost-usd` caps the harness's own cumulative spend across the whole run,
+on top of (not instead of) the existing per-incident `INFRAGUARDIAN_MAX_COST_USD_PER_RUN` cap.
+Omitting `--model` runs the harness against the offline fake model instead — that's how
+`tests/test_live_evaluator.py` covers the harness's own mechanics (model resolution, manifest
+I/O, trace isolation, env-var restoration) without an API key. Manifests write to
+`evaluation/real-runs/<run_id>/manifest.json`, gitignored for the same reason as the trace
+artifacts above: they can contain prompts, responses, and other operationally sensitive data.
+
 ## Observability
 
 `tools/observability.py` is a thread-safe, in-memory recorder the orchestrator writes to on
@@ -289,10 +329,20 @@ goes through `tools.llm.invoke_structured()`, which requests `include_raw=True` 
 small hardcoded per-model table, and hands the result to `record_agent_call(cost_usd=...)`.
 `snapshot()` averages the recorded per-call costs over completed incidents.
 
-**Known gap:** the pricing table (`tools/llm._PRICING_PER_MILLION_TOKENS`) only covers a
-handful of Anthropic model strings — an unlisted model (including the offline fake model) prices
-every call at `$0.00` rather than raising, so swapping `INFRAGUARDIAN_MODEL` to an unlisted model
-silently under-reports cost instead of failing loudly. Extend the table when adding a new model.
+The pricing table (`tools/llm._PRICING_PER_MILLION_TOKENS`) only covers a handful of Anthropic
+model strings. A call against an unlisted real model is distinguished from the offline fake
+model's genuine `$0.00`: `_price_usage()` returns `(None, pricing_unknown=True)` for nonzero
+token usage against an unlisted model, vs. `(0.0, pricing_unknown=False)` for the fake model's
+zero usage. `tools.llm.get_last_pricing_unknown()` and `ObservabilitySnapshot.pricing_unknown_calls`
+surface that gap explicitly instead of letting it silently average into `cost_per_incident_usd`
+as a free call. Extend the pricing table when adding a new model to close the gap for real.
+
+`invoke_structured()` also wraps every provider call in a timeout (`_DEFAULT_TIMEOUT_SEC`, 20s)
+and up to `_MAX_RETRIES` (2) retries with exponential backoff for transient failures, and
+supports an opt-in per-run cost budget: set `INFRAGUARDIAN_MAX_COST_USD_PER_RUN` and
+`run_incident()` raises `CostBudgetExceededError` (routed through the same fail-closed sentinel
+path as any other LLM failure — PRD §9) once a run's known cost reaches the cap, rather than
+making an unbounded number of calls against a single incident.
 
 ## Deployment
 
@@ -329,17 +379,27 @@ deployed anywhere; this project is meant to be run locally (see Quickstart above
 uv run pytest -q
 ```
 
-109 passing cases across 17 files, covering metric contracts, the rule engine (every scenario's
+143 passing cases across 21 files, covering metric contracts, the rule engine (every scenario's
 first/last sample classified correctly), the fake model, specialist agents, LangGraph
 fan-out/fan-in and synthesis, confidence calibration, routing (a dedicated table-driven
 safety-invariant checklist — critical-never-auto-remediates and low-confidence-always-escalates
-are explicit test cases, not incidental coverage), remediation runbooks, incident-store
+are explicit test cases, not incidental coverage), runbook preconditions (a model-diagnosed
+`SAFE` finding alone is not sufficient for `AUTO_REMEDIATE` unless the deterministic rule breach
+is isolated to that runbook's required signal), prompt-injection resistance (`pg_stat_statements`
+is never read for raw query text, and routing/preconditions never consult free-text fields even
+when a specialist's output is fully attacker-controlled), remediation runbooks, incident-store
 idempotency, the orchestrator's fail-closed behavior on a raising specialist, real and simulated
 metric collectors, the Postgres collector (monkeypatched, no live DB needed), the deterministic
 severity floor for safety-critical rules (P0 fix — parameterized across every ECC breach
 variant), the continuous watch loop's edge-triggered alerting and persist-only-on-
-anomaly rule, LLM cost pricing, the API, and the evaluation harness itself. All run offline
-against the fake model — no network or API key required for CI.
+anomaly rule, LLM cost pricing/timeout/retry-backoff/cost-budget behavior (including the
+cross-thread cost-budget propagation LangGraph's parallel specialist branches require — see
+`tools/llm.py`'s `_CostBudget`/`ContextVar` design), the live-evaluator harness's own mechanics
+(model resolution, manifest I/O, trace isolation — run against the fake model, same as everything
+else here), the API, and the evaluation harness itself. All run offline against the fake model —
+no network or API key required for CI. GitHub Actions (`.github/workflows/ci.yml`) runs this
+exact command plus the
+evaluation harness on every push — see the badge at the top of this README.
 
 ## Limitations
 
@@ -360,7 +420,9 @@ against the fake model — no network or API key required for CI.
   intentionally not rounded up to look better than they are (1 of 3 cases matched the fake-model
   routing expectation).
 - The pricing table backing `cost_per_incident_usd` covers a handful of model strings; an
-  unlisted model prices at `$0.00` rather than erroring (see Observability above).
+  unlisted model with real token usage is now reported as `pricing_unknown` (see Observability
+  above) rather than silently priced as free, but the table itself still needs manual extension
+  to actually price a new model.
 - The real collector (`PsutilCollector`) covers CPU/mem; `PostgresCollector` covers DB. GPU
   domain remains simulator-only in this MVP.
 - No auth on the API/Docker deployment — see Deployment below; this is a conscious MVP scope
@@ -387,7 +449,8 @@ infra-guardian/
 ├── api/server.py            # FastAPI: POST /analyze, GET /health, GET /metrics
 ├── cli/main.py               # CLI: list, analyze, live, watch, metrics
 ├── storage/incident_store.py # SQLite incident + remediation-action audit trail
-├── evaluation/               # fixtures/ + evaluator.py + reports/ + REAL_MODEL_VALIDATION.md
+├── evaluation/               # fixtures/ + evaluator.py + live_evaluator.py + reports/ +
+│                             #   REAL_MODEL_VALIDATION.md
 ├── docs/                      # animated system design + learn-InfraGuardian HTML walkthroughs
 ├── tests/
 ├── scripts/demo_incident.py  # manual verification script (not the FR-17 CLI — see DECISIONS.md)
