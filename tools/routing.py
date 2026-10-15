@@ -14,7 +14,9 @@ from pydantic import BaseModel
 
 from agents.schemas import AutomationSafety, IncidentReport, RoutingDecision, SpecialistFinding
 from tools.metrics import Domain
+from tools.preconditions import check_preconditions
 from tools.remediation import get_runbook_for_domain
+from tools.thresholds import DetectionResult
 
 _AUTO_REMEDIATE_CONFIDENCE_MIN = 0.8
 _ESCALATE_CONFIDENCE_MAX = 0.5
@@ -28,14 +30,22 @@ class RoutingResult(BaseModel):
     runbook_id: str | None = None
 
 
-def route(report: IncidentReport, findings: dict[Domain, SpecialistFinding]) -> RoutingResult:
+def route(
+    report: IncidentReport,
+    findings: dict[Domain, SpecialistFinding],
+    detections: dict[Domain, DetectionResult],
+) -> RoutingResult:
     """
     Apply PRD FR-12-14's gates, in priority order, to decide auto-remediate/recommend/escalate.
 
     Order matters: critical severity and low confidence are checked first and unconditionally
     override everything else (PRD §9 — "critical never auto-remediates", "low-confidence
-    findings fail closed"). Only after those gates pass does automation-safety and domain count
-    determine whether the incident is safe to auto-remediate at all.
+    findings fail closed"). Only after those gates pass does automation-safety, domain count,
+    and `tools.preconditions.check_preconditions` (separating "the model diagnosed it SAFE" from
+    "automation is actually authorized" — `REAL_MODEL_VALIDATION.md` P1) determine whether the
+    incident is safe to auto-remediate at all. `detections` is the deterministic rule pre-screen
+    result per domain, needed because preconditions are checked against breached rules, not
+    model output.
     """
     if report.severity.value == "critical":
         return RoutingResult(
@@ -63,12 +73,24 @@ def route(report: IncidentReport, findings: dict[Domain, SpecialistFinding]) -> 
         (only_domain,) = findings.keys()
         runbook = get_runbook_for_domain(only_domain)
         if runbook is not None:
+            precondition = check_preconditions(runbook.id, only_domain, detections)
+            if precondition.met:
+                return RoutingResult(
+                    decision=RoutingDecision.AUTO_REMEDIATE,
+                    reason=(
+                        f"Confidence {report.confidence:.2f} >= {_AUTO_REMEDIATE_CONFIDENCE_MIN}, "
+                        f"single affected domain ({only_domain.value}) is SAFE, an allowlisted "
+                        f"runbook exists for it, and its deterministic preconditions are met "
+                        f"(PRD FR-12): {precondition.reason}"
+                    ),
+                    runbook_id=runbook.id,
+                )
             return RoutingResult(
-                decision=RoutingDecision.AUTO_REMEDIATE,
+                decision=RoutingDecision.RECOMMEND,
                 reason=(
-                    f"Confidence {report.confidence:.2f} >= {_AUTO_REMEDIATE_CONFIDENCE_MIN}, "
-                    f"single affected domain ({only_domain.value}) is SAFE, and an allowlisted "
-                    "runbook exists for it (PRD FR-12)."
+                    f"Model diagnosis would otherwise clear the auto-remediate bar, but "
+                    f"runbook '{runbook.id}' preconditions are not met — automation is not "
+                    f"authorized without them: {precondition.reason}"
                 ),
                 runbook_id=runbook.id,
             )
