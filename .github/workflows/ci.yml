@@ -1,0 +1,33 @@
+name: CI
+
+# Runs the full test suite and the evaluation harness against the offline fake model on every
+# push/PR, proving the README's claim that both run with no network or API key required.
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-and-evaluate:
+    runs-on: ubuntu-latest
+    env:
+      # Belt-and-suspenders: explicitly force the fake model even if a secret ever leaks into
+      # this environment, so CI can never accidentally spend real API budget.
+      INFRAGUARDIAN_MODEL: fake
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies (locked, public PyPI only)
+        run: uv sync --locked
+
+      - name: Run tests
+        run: uv run pytest -q
+
+      - name: Run evaluation harness
+        run: uv run python -m evaluation.evaluator
