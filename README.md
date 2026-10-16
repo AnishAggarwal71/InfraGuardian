@@ -67,11 +67,12 @@ Metric Sources → Ingestion → Rule Pre-Screen → Specialist Agents (parallel
   reports, and a separate FR-16 audit log of every executed action, idempotency-guarded by a
   `UNIQUE(incident_id, runbook_id)` constraint.
 
-**Diagrams:** animated high-level and low-level system design walkthroughs, plus a narrated
-"learn InfraGuardian" explainer, live under `docs/`:
-[`system_design_high_level.html`](docs/system_design_high_level.html),
+**Diagrams:** animated high-level and low-level system design walkthroughs, a narrated
+"learn InfraGuardian" explainer, and a mentor-oriented design-rationale walkthrough, live under
+`docs/`: [`system_design_high_level.html`](docs/system_design_high_level.html),
 [`system_design_low_level.html`](docs/system_design_low_level.html),
-[`learn_infraguardian.html`](docs/learn_infraguardian.html). Open any of them directly in a
+[`learn_infraguardian.html`](docs/learn_infraguardian.html),
+[`mentor_walkthrough.html`](docs/mentor_walkthrough.html). Open any of them directly in a
 browser (`open docs/system_design_high_level.html` on macOS) — no server needed.
 
 ## Model-agnostic LLM layer
@@ -211,6 +212,11 @@ gates in action:
 - `gpu_ecc_errors` → severity resolves to **CRITICAL** → **escalates** unconditionally, even
   though the underlying confidence (0.65) would otherwise be in range. This is the single most
   important safety behavior to see working: critical incidents never auto-remediate, full stop.
+
+To see the deterministic rule pre-screen run in isolation, with no LLM/specialist involvement
+at all, run `uv run python -m scripts.demo [scenario_name]` instead — it prints the
+healthy/anomalous classification for each sample in a scenario straight from
+`tools/thresholds.py`.
 
 ## Evaluation
 
@@ -451,8 +457,9 @@ infra-guardian/
 ├── storage/incident_store.py # SQLite incident + remediation-action audit trail
 ├── evaluation/               # fixtures/ + evaluator.py + live_evaluator.py + reports/ +
 │                             #   REAL_MODEL_VALIDATION.md
-├── docs/                      # animated system design + learn-InfraGuardian HTML walkthroughs
+├── docs/                      # animated system design + learn-InfraGuardian + mentor-walkthrough HTML
 ├── tests/
+├── scripts/demo.py            # M1 rule-engine-only demo (no LLM) — see Demo scenarios
 ├── scripts/demo_incident.py  # manual verification script (not the FR-17 CLI — see DECISIONS.md)
 ├── scripts/demo_postgres.py  # real Postgres integration demo (see Real Postgres integration)
 ├── scripts/demo_postgres_load.py  # connection pressure generator for the Postgres demo
