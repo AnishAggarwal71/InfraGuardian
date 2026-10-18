@@ -934,3 +934,42 @@ returns (so it can never leak state into whatever runs next in the same process)
 budget cutoff never reporting more completed runs than requested, and the safety-invariant flags
 being correctly computed as all-false against the known-safe fake-model baseline. Full suite:
 143 tests pass; fake-model evaluation harness unaffected (100% across all metrics).
+
+## 2026-10-18 — Closing PRD §18 open questions; final repo cleanup pass
+
+**Decision:** ratify all 5 of CLAUDE.md's PRD §18 "open questions" as final, resolved behavior
+rather than provisional defaults — see CLAUDE.md's "Resolved questions" section for the per-item
+detail. Four of the five required no code change because the shipped implementation already
+matched the stated default (runbook allowlist scope, correlational-evidence labeling, calibrated
+confidence/severity, unbounded SQLite retention); only CLAUDE.md's own framing changed, from
+"not yet signed off" to "signed off 2026-10-18." The fifth (first real deployment target) is
+resolved as "none planned" — the existing `render.yaml` fake-model-only public demo is the only
+deployment in scope for this portfolio project; no further real-model/real-infra deployment is
+planned.
+
+**Why:** the user asked to close out every remaining open item and get the repo to 100%/deploy-
+ready. Re-verifying each default against the actual shipped code (rather than just rubber-
+stamping the original CLAUDE.md language) confirmed none had drifted: `tools/remediation.py`
+still allowlists exactly 3 narrowly-scoped runbooks, `agents/schemas.py::CrossDomainCorrelation`
+still gates causal language on measured evidence, `tools/confidence.py`/`tools/severity.py`
+still implement the calibrated-combination approach, and `storage/incident_store.py` has no
+retention/purge logic (confirmed by `grep`, not assumed).
+
+**Alternatives considered:** leaving §18 open indefinitely as "living defaults" — rejected,
+since the user explicitly asked for a 100% close and an unresolved-questions section left open
+past that point reads as unfinished work in a portfolio-review context (PRD §17), not as
+intentional flexibility.
+
+**Also in this pass — local cleanup, no tracked-file changes:**
+- Deleted gitignored local artifacts: `infraguardian.db` (regenerates on next run),
+  `evaluation/real-runs/` (leftover live-evaluator smoke-test traces from manual testing this
+  month). Neither was tracked by git; `.gitignore` already covered both (`*.db`,
+  `evaluation/real-runs/`).
+- Confirmed `Dockerfile`, `pyproject.toml` (public-PyPI index pin), and `uv.lock` (no internal-
+  mirror URLs) are already deploy-ready from the 2026-10-09 pinning decision — no changes
+  needed for this pass.
+
+**Verification:** `grep -rn "retention\|DELETE\|TTL\|purge" storage/incident_store.py` returns
+nothing, confirming the "no retention logic" claim rather than asserting it from memory.
+`git status --short --ignored` confirmed the deleted artifacts were untracked/gitignored before
+removal. `.venv/bin/python -m pytest -q` → 143 passed (doc/cleanup-only pass, no code touched).

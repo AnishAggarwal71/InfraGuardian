@@ -111,25 +111,31 @@ Numbers in parens are the PRD functional requirements it satisfies.
     simulator→production collector migration path (this doubles as the portfolio writeup,
     PRD §17).
 
-## Open questions (PRD §18) — working defaults
+## Resolved questions (PRD §18)
 
-Not yet signed off by the user; treat as provisional and flag if a build decision depends on
-one of these in a way that's hard to reverse later.
+Signed off by the user on 2026-10-18 (see `DECISIONS.md`, "Closing PRD §18"). These were
+previously tracked as provisional working defaults; they are now the final, intentional
+behavior — a future change to any of them is a deliberate scope change, not a loose end.
 
-- **Which runbooks are MVP-safe?** Default to narrowly scoped, reversible actions with no
-  blast radius beyond a single resource: e.g. restart a specific stuck service/process, clear a
-  bounded cache, scale a non-critical worker pool within a capped range. Avoid anything touching
-  data deletion, scaling down critical capacity, or network/security config.
-- **Causal vs correlational evidence standard:** default to "correlational unless the evidence
-  includes a direct measured link (e.g. a query directly traced to the resource spike)." Report
-  labels every relationship as hypothesis unless that bar is met.
-- **Confidence: model vs rule-derived vs calibrated?** Default to a calibrated combination —
-  rule pre-screen contributes a deterministic floor/ceiling signal, LLM contributes a reasoning-
-  based estimate, orchestrator combines them rather than trusting either alone.
-- **Incident history retention for future RCA:** default to retaining full incident reports
-  (not just summaries) in SQLite indefinitely for MVP; revisit retention policy post-MVP.
-- **First real deployment target:** no default — this is a user call when it comes up, since it
-  depends on infra they actually have access to.
+- **Which runbooks are MVP-safe?** Resolved as the 3 runbooks actually shipped in
+  `tools/remediation.py::RUNBOOKS` — `db.recycle_connection_pool`, `cpu_mem.restart_worker_process`,
+  `gpu.clear_memory_cache`. Each is narrowly scoped to a single resource, reversible, and touches
+  no data deletion, capacity scale-down, or network/security config.
+- **Causal vs correlational evidence standard:** resolved as implemented in
+  `agents/schemas.py::CrossDomainCorrelation` — every cross-domain relationship is labeled a
+  hypothesis unless backed by a direct measured link (the `pg_stat_statements`-sourced evidence
+  path is the one case meeting that bar today).
+- **Confidence: model vs rule-derived vs calibrated?** Resolved as implemented in
+  `tools/confidence.py::calibrate()` (caps model-reported confidence at 0.65/0.8/0.95 depending
+  on domain corroboration and automation-safety agreement) and its severity counterpart,
+  `tools/severity.py::severity_floor()`.
+- **Incident history retention for future RCA:** resolved as implemented — `storage/
+  incident_store.py` has no deletion/TTL/purge path; every incident report is retained
+  indefinitely in SQLite by design, not by omission.
+- **First real deployment target:** resolved as "none planned beyond the existing public demo."
+  `render.yaml` already deploys the fake-model-only public instance described in README's
+  Deployment section; no further real-model/real-infra deployment is in scope for this
+  portfolio project.
 
 ## Working conventions for this repo
 
